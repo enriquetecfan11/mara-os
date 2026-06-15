@@ -234,10 +234,10 @@ async function askPi(chatId: number, message: string) {
           }
         }
 
+        // Push tool result to history as required by the agentic loop
         history.push({
           role: "tool",
-          name: toolName,
-          content: resultStr
+          content: JSON.stringify(resultStr)
         })
 
         if (history.length > 20) {
@@ -245,8 +245,12 @@ async function askPi(chatId: number, message: string) {
         }
       }
     } else {
-      replyText = assistantMessage.content?.trim() || ""
-      loop = false
+        // Final assistant message without tool calls – exit loop
+        console.log("[Debug] Final message:", JSON.stringify(assistantMessage));
+        const finalContent = assistantMessage.content?.trim() ?? "No he podido generar una respuesta.";
+        replyText = finalContent;
+        loop = false;
+        // Continue to loop termination
     }
   }
 
