@@ -1,0 +1,20 @@
+{
+  "name": "agente-bolsillo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bot": "node --env-file-if-exists=.env --import tsx src/bot.ts",
+    "typecheck": "tsc --noEmit",
+    "reset-bot": "rm -rf config/MEMORY.md && touch config/MEMORY.md",
+    "reset-memory": "git checkout config/MEMORY.md"
+  },
+  "dependencies": {
+    "grammy": "^1.38.4"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}
