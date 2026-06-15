@@ -1,203 +1,73 @@
-# Pocket Agent
+# Mara OS
 
-Companion app for a talk about building a small personal agent on top of Telegram and the Pi Agent runtime.
+Asistente personal local basado en un bot de Telegram y modelos locales de lenguaje a través de Ollama.
 
-The project is intentionally small. It is not a production-ready assistant; it is a readable reference implementation for understanding how a chat channel, an agent runtime, context files, memory, skills and simple approval rules fit together.
+El proyecto está diseñado para ser sencillo, legible y fácil de personalizar. Sirve como implementación de referencia para entender cómo conectar un canal de chat (Telegram), un motor de inferencia local (Ollama), archivos de contexto persistentes (alma, usuario, reglas del agente), memoria a largo plazo y reglas sencillas de confirmación de seguridad.
 
-## What It Does
+## Características principales
 
-- Receives text messages from Telegram.
-- Sends each turn to Pi Agent.
-- Loads persistent agent context from the user's config directory.
-- Supports local skills through `SKILL.md` files.
-- Downloads Telegram images and passes their local path to the agent.
-- Loads a simple `MEMORY.md` file on every turn.
-- Requires an explicit `Confirmo` prefix before publishing to X.
+- **Integración con Telegram**: Envío y recepción de mensajes directamente desde un bot de Telegram.
+- **Inferencia local**: Procesamiento de lenguaje natural utilizando Ollama y modelos locales (como Gemma, Llama o Phi).
+- **Personalidad y contexto persistentes**: Carga dinámica del contexto del agente a partir de archivos Markdown (`SOUL.md`, `USER.md`, `AGENTS.md`).
+- **Memoria persistente**: Lee y escribe de forma autónoma recuerdos y hechos clave del usuario en `MEMORY.md` a través de llamadas a funciones (tool calls).
+- **Control de seguridad**: Flujo básico de aprobación para acciones externas críticas.
+- **Soporte multimedia**: Descarga automática de imágenes enviadas por Telegram a un directorio local de subidas para su posterior procesamiento.
 
-## Requirements
+## Requisitos
 
-- Node.js.
-- pnpm.
-- A Telegram bot token.
-- Pi Agent configured locally.
-- Optional X/Twitter API credentials if you want to use the bundled X publishing skill.
+- Node.js (v18+)
+- pnpm o npm
+- Un bot de Telegram (puedes crear uno con [@BotFather](https://t.me/BotFather))
+- Ollama instalado y ejecutándose localmente
 
-## Install
+## Instalación y Configuración
 
-```bash
-pnpm install
-cp .env.example .env
-```
+1. Instala las dependencias del proyecto:
+   ```bash
+   pnpm install
+   ```
 
-Set your Telegram token in `.env`:
+2. Copia el archivo de variables de entorno y configúralo:
+   ```bash
+   cp .env.example .env
+   ```
 
-```bash
-TELEGRAM_TOKEN=your_telegram_bot_token
-```
+3. Edita `.env` con tus credenciales y configuración:
+   ```env
+   TELEGRAM_TOKEN=tu_token_de_telegram
+   OLLAMA_URL=http://localhost:11434
+   OLLAMA_MODEL=gemma4:e2b
+   TIMEZONE=Europe/Madrid
+   ```
 
-If you want to publish to X, also provide:
+## Archivos de Contexto (`config/`)
 
-```bash
-X_API_KEY=
-X_API_SECRET=
-X_ACCESS_TOKEN=
-X_ACCESS_TOKEN_SECRET=
-```
+El agente define su comportamiento mediante archivos Markdown ubicados en la carpeta `config/`:
 
-## User Config Directory
+- **`SOUL.md`**: Define la personalidad profunda del agente, su tono de comunicación y estilo preferido de respuestas.
+- **`USER.md`**: Información estable sobre el usuario (preferencias, tecnologías que usa, ubicación, etc.) para que el agente tenga contexto al responder.
+- **`AGENTS.md`**: Reglas operativas y del canal (por ejemplo, evitar markdown en Telegram, cómo y cuándo guardar recuerdos, límites de seguridad).
+- **`MEMORY.md`**: Almacena recuerdos duraderos. La IA puede actualizar este archivo automáticamente cuando el usuario le pide recordar cosas.
 
-The agent reads its durable configuration from:
+## Ejecución
 
-```txt
-~/.config/agente-bolsillo/
-```
-
-Create the directory before running the bot:
-
-```bash
-mkdir -p ~/.config/agente-bolsillo/skills
-```
-
-The repository includes reference files in `config/`. Copy them to your user config directory and adapt them:
-
-```bash
-cp -R config/* ~/.config/agente-bolsillo/
-```
-
-You also need to create a `SOUL.md` file:
-
-```txt
-~/.config/agente-bolsillo/SOUL.md
-```
-
-## Context Files
-
-### `SOUL.md`
-
-Defines the agent's personality and stable communication style.
-
-Use it for things that should remain true across conversations:
-
-- tone
-- personality
-- response style
-- general behavioral preferences
-
-### `USER.md`
-
-Describes who the agent works for.
-
-Use it for stable personal context:
-
-- name
-- relevant work
-- preferences
-- recurring personal details
-
-Keep it short. This file is loaded as context, so it should contain useful facts rather than a biography.
-
-### `AGENTS.md`
-
-Defines how the agent should behave in this specific environment.
-
-Use it for channel and runtime rules:
-
-- Telegram formatting expectations
-- when to save memories
-- how to handle external actions
-- what needs explicit confirmation
-
-### `MEMORY.md`
-
-Stores durable facts learned over time.
-
-The bot reads this file on every turn and adds it to the prompt. The agent can update it when instructed by `AGENTS.md` and when the user asks it to remember something.
-
-Keep memories brief and concrete.
-
-## Skills
-
-Skills live under:
-
-```txt
-~/.config/agente-bolsillo/skills/
-```
-
-Each skill is a folder with a `SKILL.md` file:
-
-```txt
-~/.config/agente-bolsillo/skills/
-  my-skill/
-    SKILL.md
-    scripts/
-```
-
-The bot only exposes skills from that folder. This keeps the demo isolated from any other Pi or Codex skills installed on the machine.
-
-## Bundled X Skill
-
-The reference config includes an `x-publish` skill:
-
-```txt
-~/.config/agente-bolsillo/skills/x-publish/SKILL.md
-```
-
-It uses a small TypeScript script to publish text posts, and optionally images, through the X API.
-
-To publish from Telegram, the message must start with:
-
-```txt
-Confirmo
-```
-
-Example:
-
-```txt
-Confirmo publica en X: Probando mi agente de bolsillo desde Telegram.
-```
-
-This is a deliberately simple approval guard. Full agent systems usually implement this kind of boundary with tool policies, sandboxing and runtime permission prompts.
-
-## Images
-
-If you send a photo to the Telegram bot, it downloads the image to:
-
-```txt
-~/.config/agente-bolsillo/uploads/
-```
-
-The agent receives the local path, so a skill can use the image later.
-
-## Run
+Para iniciar el bot en modo de desarrollo o ejecución normal:
 
 ```bash
 pnpm bot
 ```
 
-If your X credentials are defined in your shell profile, make sure they are loaded before starting the bot:
-
-```bash
-source ~/.zshrc
-pnpm bot
-```
-
-## Project Structure
+## Estructura del Proyecto
 
 ```txt
 src/
-  bot.ts              Telegram + Pi Agent wiring
-  approvals.ts        Minimal confirmation guard
-  telegram-files.ts   Telegram image download helper
+  bot.ts              # Lógica principal del bot, conexión con Telegram y Ollama
+  approvals.ts        # Control básico de confirmaciones de seguridad
+  telegram-files.ts   # Helper para descarga de archivos e imágenes de Telegram
 
 config/
-  AGENTS.md           Reference channel/runtime rules
-  USER.md             Reference user context
-  MEMORY.md           Reference memory file
-  skills/             Reference skills
+  SOUL.md             # Personalidad del agente (Mara)
+  USER.md             # Información del usuario (Kike)
+  AGENTS.md           # Reglas de formato y comportamiento
+  MEMORY.md           # Memoria compartida y persistente
 ```
-
-## Notes
-
-This project is designed to be read during a live explanation. The implementation favors clarity over completeness.
-
-For a production assistant, you would probably add stronger permission handling, persistent session storage, better observability, secret management, tests and a real deployment story.
