@@ -1,6 +1,6 @@
 {
   "servers": [
-    { "name": "calendar", "url": "https://core-n8n.832gky.easypanel.host/mcp/agents-calendar" },
+    { "name": "calendar", "url": "https://core-n8n.832gky.easypanel.host/mcp/calendar" },
     { "name": "notes", "url": "https://core-n8n.832gky.easypanel.host/mcp/agents-notes" }
   ]
 }
