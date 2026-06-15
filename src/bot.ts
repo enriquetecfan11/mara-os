@@ -4,6 +4,8 @@ import { join } from "node:path"
 import { Bot } from "grammy"
 import { approvalMessage, hasApproval, needsApproval } from "./approvals.js"
 import { saveTelegramPhoto } from "./telegram-files.js"
+import { Client } from "@modelcontextprotocol/sdk/client/index.js"
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 
 const telegramToken = process.env.TELEGRAM_TOKEN!
 const bot = new Bot(telegramToken)
@@ -15,7 +17,65 @@ const memoryPath = join(agentDir, "MEMORY.md")
 const ollamaUrl = process.env.OLLAMA_URL || "http://localhost:11434"
 const ollamaModel = process.env.OLLAMA_MODEL || "gemma4:e2b"
 
-const chatHistories = new Map<number, Array<{ role: "user" | "assistant", content: string }>>()
+const chatHistories = new Map<number, Array<{ role: "user" | "assistant" | "tool", content: string, name?: string, tool_calls?: any[] }>>()
+
+interface McpServerConfig {
+  name: string
+  url: string
+}
+
+interface McpConfig {
+  servers: McpServerConfig[]
+}
+
+const clientsMap = new Map<string, Client>()
+const toolToClientMap = new Map<string, Client>()
+let ollamaTools: Array<any> = []
+
+async function initMcpClients() {
+  try {
+    const mcpConfigPath = join(process.cwd(), "mcp.json")
+    const mcpConfigContent = await readFile(mcpConfigPath, "utf8")
+    const mcpConfig = JSON.parse(mcpConfigContent) as McpConfig
+
+    for (const server of mcpConfig.servers) {
+      console.log(`[MCP] Connecting to server "${server.name}" at ${server.url}...`)
+      try {
+        const transport = new StreamableHTTPClientTransport(new URL(server.url))
+        const client = new Client(
+          { name: `mara-os-client-${server.name}`, version: "1.0.0" },
+          { capabilities: {} }
+        )
+        await client.connect(transport)
+        clientsMap.set(server.name, client)
+        console.log(`[MCP] Connected to server "${server.name}"`)
+
+        const toolsResult = await client.listTools()
+        console.log(`[MCP] Server "${server.name}" tools:`, toolsResult.tools.map(t => t.name))
+        
+        for (const tool of toolsResult.tools) {
+          toolToClientMap.set(tool.name, client)
+          
+          ollamaTools.push({
+            type: "function",
+            function: {
+              name: tool.name,
+              description: tool.description || "",
+              parameters: tool.inputSchema || {
+                type: "object",
+                properties: {}
+              }
+            }
+          })
+        }
+      } catch (err) {
+        console.error(`[MCP] Failed to connect to server "${server.name}":`, err)
+      }
+    }
+  } catch (err) {
+    console.error(`[MCP] Error reading or parsing mcp.json:`, err)
+  }
+}
 
 async function askPi(chatId: number, message: string) {
   const soul = await readFile(join(agentDir, "SOUL.md"), "utf8")
@@ -45,94 +105,148 @@ async function askPi(chatId: number, message: string) {
     history.shift()
   }
 
-  console.log(`[Ollama] Sending request to ${ollamaUrl}/api/chat using model: ${ollamaModel} (history size: ${history.length})...`)
-  const response = await fetch(`${ollamaUrl}/api/chat`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: ollamaModel,
-      messages: [
-        {
-          role: "system",
-          content: systemPrompt,
-        },
-        ...history,
-      ],
-      stream: false,
-      tools: [
-        {
-          type: "function",
-          function: {
-            name: "update_memory",
-            description: "Updates the MEMORY.md file with new or updated facts. Write the entire updated content of the MEMORY.md file.",
-            parameters: {
-              type: "object",
-              properties: {
-                content: {
-                  type: "string",
-                  description: "The complete, updated content for the MEMORY.md file."
-                }
-              },
-              required: ["content"]
-            }
-          }
-        }
-      ]
-    }),
-  })
+  let loop = true
+  let replyText = ""
 
-  if (!response.ok) {
-    throw new Error(`Ollama request failed: ${response.status} ${response.statusText}`)
-  }
-
-  const data = (await response.json()) as {
-    message: {
-      role: string
-      content: string
-      tool_calls?: Array<{
+  while (loop) {
+    console.log(`[Ollama] Sending request to ${ollamaUrl}/api/chat using model: ${ollamaModel} (history size: ${history.length})...`)
+    
+    const tools = [
+      {
+        type: "function",
         function: {
-          name: string
-          arguments: any
-        }
-      }>
-    }
-  }
-
-  // Handle tool calls if any
-  if (data.message.tool_calls && data.message.tool_calls.length > 0) {
-    for (const toolCall of data.message.tool_calls) {
-      if (toolCall.function.name === "update_memory") {
-        let newMemory = ""
-        const args = toolCall.function.arguments
-        if (typeof args === "string") {
-          try {
-            const parsed = JSON.parse(args)
-            newMemory = parsed.content
-          } catch {
-            newMemory = args
+          name: "update_memory",
+          description: "Updates the MEMORY.md file with new or updated facts. Write the entire updated content of the MEMORY.md file.",
+          parameters: {
+            type: "object",
+            properties: {
+              content: {
+                type: "string",
+                description: "The complete, updated content for the MEMORY.md file."
+              }
+            },
+            required: ["content"]
           }
-        } else if (args && typeof args === "object" && "content" in args) {
-          newMemory = args.content
         }
+      },
+      ...ollamaTools
+    ]
 
-        if (newMemory) {
-          await writeFile(memoryPath, newMemory, "utf8")
-          console.log(`[Memory] Updated MEMORY.md with new contents: ${newMemory}`)
-        }
+    const response = await fetch(`${ollamaUrl}/api/chat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: ollamaModel,
+        messages: [
+          {
+            role: "system",
+            content: systemPrompt,
+          },
+          ...history,
+        ],
+        stream: false,
+        tools: tools
+      }),
+    })
+
+    if (!response.ok) {
+      throw new Error(`Ollama request failed: ${response.status} ${response.statusText}`)
+    }
+
+    const data = (await response.json()) as {
+      message: {
+        role: "assistant"
+        content: string
+        tool_calls?: Array<{
+          function: {
+            name: string
+            arguments: any
+          }
+        }>
       }
     }
-  }
 
-  const replyText = data.message.content?.trim() || ""
-  console.log(`[Ollama] Received response (${replyText.length} characters)`)
-
-  // Add bot response to history
-  if (replyText) {
-    history.push({ role: "assistant", content: replyText })
+    const assistantMessage = data.message
+    
+    // Store assistant response in history
+    history.push({
+      role: "assistant",
+      content: assistantMessage.content || "",
+      ...(assistantMessage.tool_calls ? { tool_calls: assistantMessage.tool_calls } : {})
+    })
+    
     if (history.length > 20) {
       history.shift()
+    }
+
+    if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
+      console.log(`[Ollama] Received tool calls:`, JSON.stringify(assistantMessage.tool_calls))
+      
+      for (const toolCall of assistantMessage.tool_calls) {
+        const toolName = toolCall.function.name
+        let toolArgs = toolCall.function.arguments
+
+        if (typeof toolArgs === "string") {
+          try {
+            toolArgs = JSON.parse(toolArgs)
+          } catch {
+            // Keep as string
+          }
+        }
+
+        console.log(`[Tool] Executing tool "${toolName}" with arguments:`, toolArgs)
+
+        let resultStr = ""
+        if (toolName === "update_memory") {
+          let newMemory = ""
+          if (toolArgs && typeof toolArgs === "object" && "content" in toolArgs) {
+            newMemory = toolArgs.content
+          } else if (typeof toolArgs === "string") {
+            newMemory = toolArgs
+          }
+          if (newMemory) {
+            await writeFile(memoryPath, newMemory, "utf8")
+            console.log(`[Memory] Updated MEMORY.md with new contents: ${newMemory}`)
+            resultStr = "Memoria actualizada correctamente."
+          } else {
+            resultStr = "Error: no se proporcionó contenido para actualizar la memoria."
+          }
+        } else {
+          const client = toolToClientMap.get(toolName)
+          if (client) {
+            try {
+              console.log(`[MCP] Calling tool "${toolName}" on server...`)
+              const callResult = await client.callTool({
+                name: toolName,
+                arguments: toolArgs
+              })
+              resultStr = JSON.stringify(callResult)
+              console.log(`[MCP] Tool "${toolName}" returned:`, resultStr)
+            } catch (err: any) {
+              console.error(`[MCP] Error executing tool "${toolName}":`, err)
+              resultStr = `Error executing tool: ${err?.message || err}`
+            }
+          } else {
+            console.error(`[Tool] Tool "${toolName}" client not found`)
+            resultStr = `Error: Tool "${toolName}" client not found.`
+          }
+        }
+
+        history.push({
+          role: "tool",
+          name: toolName,
+          content: resultStr
+        })
+
+        if (history.length > 20) {
+          history.shift()
+        }
+      }
+    } else {
+      replyText = assistantMessage.content?.trim() || ""
+      loop = false
     }
   }
 
@@ -180,12 +294,17 @@ bot.on("message:photo", async (ctx) => {
   console.log(`[Telegram] Replied to @${username}`)
 })
 
-console.log("[Bot] Starting Telegram bot...")
-bot.start().catch((err) => {
-  console.error("[Bot] Failed to start:", err)
-})
-bot.api.getMe().then((me) => {
-  console.log(`[Bot] Bot @${me.username} is running successfully!`)
-}).catch((err) => {
-  console.error("[Bot] Failed to get bot info:", err)
-})
+async function start() {
+  await initMcpClients()
+  console.log("[Bot] Starting Telegram bot...")
+  bot.start().catch((err) => {
+    console.error("[Bot] Failed to start:", err)
+  })
+  bot.api.getMe().then((me) => {
+    console.log(`[Bot] Bot @${me.username} is running successfully!`)
+  }).catch((err) => {
+    console.error("[Bot] Failed to get bot info:", err)
+  })
+}
+
+start()

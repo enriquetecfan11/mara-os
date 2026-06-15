@@ -10,6 +10,7 @@
     "reset-memory": "git checkout config/MEMORY.md"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "grammy": "^1.38.4"
   },
   "devDependencies": {
