@@ -9,7 +9,7 @@ El proyecto está diseñado para ser sencillo, legible y fácil de personalizar.
 - **Integración con Telegram**: Envío y recepción de mensajes directamente desde un bot de Telegram.
 - **Inferencia local**: Procesamiento de lenguaje natural utilizando Ollama y modelos locales (como Gemma, Llama o Phi).
 - **Personalidad y contexto persistentes**: Carga dinámica del contexto del agente a partir de archivos Markdown (`SOUL.md`, `USER.md`, `AGENTS.md`).
-- **Memoria persistente**: Lee y escribe de forma autónoma recuerdos y hechos clave del usuario en `MEMORY.md` a través de llamadas a funciones (tool calls).
+- **Memoria persistente**: Usa `MEMORY.md` como memoria local persistente y puede conectar servidores MCP de memoria si están disponibles.
 - **Control de seguridad**: Flujo básico de aprobación para acciones externas críticas.
 - **Soporte multimedia**: Descarga automática de imágenes enviadas por Telegram a un directorio local de subidas para su posterior procesamiento.
 
@@ -47,7 +47,7 @@ El agente define su comportamiento mediante archivos Markdown ubicados en la car
 - **`SOUL.md`**: Define la personalidad profunda del agente, su tono de comunicación y estilo preferido de respuestas.
 - **`USER.md`**: Información estable sobre el usuario (preferencias, tecnologías que usa, ubicación, etc.) para que el agente tenga contexto al responder.
 - **`AGENTS.md`**: Reglas operativas y del canal (por ejemplo, evitar markdown en Telegram, cómo y cuándo guardar recuerdos, límites de seguridad).
-- **`MEMORY.md`**: Almacena recuerdos duraderos. La IA puede actualizar este archivo automáticamente cuando el usuario le pide recordar cosas.
+- **`MEMORY.md`**: Memoria duradera local. El bot la usa como fuente persistente cuando no hay servidor MCP de memoria disponible.
 
 ## Ejecución
 

@@ -1,6 +1,18 @@
 {
   "servers": [
-    { "name": "calendar", "url": "https://core-n8n.832gky.easypanel.host/mcp/calendar" },
-    { "name": "notes", "url": "https://core-n8n.832gky.easypanel.host/mcp/agents-notes" }
+    {
+      "name": "engram",
+      "type": "stdio",
+      "command": "/Users/enriquetecfan/.local/bin/uv",
+      "args": ["--directory", "/Users/enriquetecfan/Engram", "run", "engram-server"]
+    },
+    {
+      "name": "macos_automator",
+      "type": "stdio",
+      "command": "/opt/homebrew/bin/npx",
+      "args": ["-y", "--package", "@steipete/macos-automator-mcp", "macos-automator-mcp"]
+    },
+    { "name": "calendar", "type": "http", "url": "https://core-n8n.832gky.easypanel.host/mcp/calendar" },
+    { "name": "notes", "type": "http", "url": "https://core-n8n.832gky.easypanel.host/mcp/agents-notes" }
   ]
 }
