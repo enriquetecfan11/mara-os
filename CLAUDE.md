@@ -34,6 +34,7 @@ pnpm reset-memory     # Restore MEMORY.md to git state
   - Reduces per-request latency: 40-60ms (5 file reads) → 1ms (cache hits)
 
 - **bot.ts**: Telegram bot handler. Commands: `/start`, `/help`, `/status`, `/reset`, `/skill`. Message handler orchestrates approval checks and calls to `askPi()`.
+  - **Graceful shutdown**: Listens for SIGINT (Ctrl+C) and SIGTERM signals, stops bot cleanly without errors.
   
 - **ollama.ts**: Ollama API integration. 
   - `askPi()`: Main function that constructs system prompt (from SYSTEM.md template with dynamic values), sends request with `tool_choice: "required"`, `temperature: 0.3`, and 30-second timeout to ensure tool-calling and fail-fast behavior. Parses `tool_calls` and dispatches via `callMcpTool()`. Maintains per-chat history up to 20 messages.
