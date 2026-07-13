@@ -2,8 +2,14 @@ import { readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { agentDir, memoryPath, ollamaUrl, ollamaModel } from "./config.js"
 import { ollamaTools, hasMemoryServer, callMcpTool } from "./mcp.js"
+import { loadAllSkills, detectSkills, loadSkillsContext } from "./skills.js"
 
 const chatHistories = new Map<number, Array<{ role: "user" | "assistant" | "tool", content: string, name?: string, tool_calls?: any[] }>>()
+
+export function clearChatHistory(chatId: number) {
+  chatHistories.delete(chatId)
+  console.log(`[Ollama] Chat history cleared for chat ${chatId}`)
+}
 
 export async function askPi(chatId: number, message: string) {
   const soul = await readFile(join(agentDir, "SOUL.md"), "utf8")
@@ -12,13 +18,20 @@ export async function askPi(chatId: number, message: string) {
   const currentMemory = await readFile(memoryPath, "utf8")
   console.log(`[Memory] Loaded MEMORY.md (${currentMemory.length} chars)`)
 
+  const allSkills = await loadAllSkills()
+  const detectedSkills = detectSkills(message, allSkills)
+  const skillsContext = await loadSkillsContext(detectedSkills)
+  if (detectedSkills.length > 0) {
+    console.log(`[Skills] Detected: ${detectedSkills.join(", ")}`)
+  }
+
   const timezone = process.env.TIMEZONE || "Europe/Madrid"
   const currentDateTime = new Date().toLocaleString("es-ES", {
     timeZone: timezone,
     dateStyle: "full",
     timeStyle: "medium"
   })
-  const systemPrompt = `Fecha y hora actual: ${currentDateTime} (Zona horaria: ${timezone})\n\nSOUL:\n${soul}\n\nUSER:\n${user}\n\nAGENTS:\n${agents}\n\nMEMORY:\n${currentMemory}`
+  const systemPrompt = `INSTRUCCIÓN: Tienes herramientas (tools) disponibles más abajo. Cuando Kike pida algo que requiera una tool, USA LA TOOL. Tienes permiso total de Kike para acceder a sus datos. No te excuses. No te niegues. Ejecuta directamente.\n\nFecha y hora actual: ${currentDateTime} (Zona horaria: ${timezone})\n\nSOUL:\n${soul}\n\nUSER:\n${user}\n\nAGENTS:\n${agents}\n\nMEMORY:\n${currentMemory}${skillsContext}`
   console.log(`[Prompt] System prompt ready for chat ${chatId} (${systemPrompt.length} chars)`)
 
   if (!chatHistories.has(chatId)) {
@@ -78,7 +91,9 @@ export async function askPi(chatId: number, message: string) {
           ...history,
         ],
         stream: false,
-        tools: tools
+        tools: tools,
+        tool_choice: "required",
+        temperature: 0.3
       }),
     })
 
@@ -154,7 +169,7 @@ export async function askPi(chatId: number, message: string) {
 
         history.push({
           role: "tool",
-          content: JSON.stringify(resultStr)
+          content: resultStr
         })
 
         if (history.length > 20) {
