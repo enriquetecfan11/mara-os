@@ -2,16 +2,17 @@ import { Bot } from "grammy"
 import { approvalMessage, hasApproval, needsApproval } from "./approvals.js"
 import { saveTelegramPhoto } from "./telegram-files.js"
 import { telegramToken, uploadsDir, ollamaUrl, ollamaModel, agentDir } from "./config.js"
-import { initMcpClients } from "./mcp.js"
+import { initMcpClients, closeMcpClients } from "./mcp.js"
 import { askPi, clearChatHistory } from "./ollama.js"
 import { getSkillList, loadSkillsContext, reloadSkills } from "./skills.js"
 import { readContextFile } from "./cache.js"
+import { info, error as logError } from "./logger.js"
 
 const bot = new Bot(telegramToken)
 
 bot.catch((err) => {
   const ctx = err.ctx
-  console.error(`[Error] Error while handling update ${ctx.update.update_id}:`, err.error)
+  logError("Bot", `Error while handling update ${ctx.update.update_id}: ${err.error}`)
 })
 
 bot.command("start", async (ctx) => {
@@ -151,38 +152,38 @@ bot.command("skill", async (ctx) => {
 
 bot.on("message:text", async (ctx) => {
   const username = ctx.from?.username || ctx.from?.first_name || "Unknown"
-  console.log(`[Telegram] Received text from @${username}: "${ctx.message.text}"`)
+  info("Telegram", `Received text from @${username}: "${ctx.message.text}"`)
 
   if (needsApproval(ctx.message.text) && !hasApproval(ctx.message.text)) {
-    console.log(`[Telegram] Message requires approval. Sending approval warning.`)
+    info("Telegram", "Message requires approval. Sending approval warning.")
     await ctx.reply(approvalMessage)
     return
   }
 
   const answer = await askPi(ctx.chat.id, ctx.message.text)
   await ctx.reply(answer)
-  console.log(`[Telegram] Replied to @${username}`)
+  info("Telegram", `Replied to @${username}`)
 })
 
 bot.on("message:photo", async (ctx) => {
   const username = ctx.from?.username || ctx.from?.first_name || "Unknown"
   const caption = ctx.message.caption ?? "Kike ha enviado una imagen."
-  console.log(`[Telegram] Received photo from @${username} with caption: "${caption}"`)
+  info("Telegram", `Received photo from @${username} with caption: "${caption}"`)
 
   if (needsApproval(caption) && !hasApproval(caption)) {
-    console.log(`[Telegram] Photo message requires approval. Sending approval warning.`)
+    info("Telegram", "Photo message requires approval. Sending approval warning.")
     await ctx.reply(approvalMessage)
     return
   }
 
   const photo = ctx.message.photo.at(-1)!
-  console.log(`[Telegram] Downloading photo...`)
+  info("Telegram", "Downloading photo...")
   const imagePath = await saveTelegramPhoto(bot, telegramToken, photo.file_id, uploadsDir)
-  console.log(`[Telegram] Photo saved to: ${imagePath}`)
+  info("Telegram", `Photo saved to: ${imagePath}`)
 
   const answer = await askPi(ctx.chat.id, `${caption}\n\nImagen local: ${imagePath}`)
   await ctx.reply(answer)
-  console.log(`[Telegram] Replied to @${username}`)
+  info("Telegram", `Replied to @${username}`)
 })
 
 async function checkOllama() {
@@ -190,19 +191,20 @@ async function checkOllama() {
     const res = await fetch(`${ollamaUrl}/api/version`, { signal: AbortSignal.timeout(5000) })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = await res.json() as { version: string }
-    console.log(`[Ollama] Ping OK \u2014 version: ${data.version}`)
+    info("Ollama", `Ping OK \u2014 version: ${data.version}`)
     return true
   } catch (err) {
-    console.error(`[Ollama] Ping FAILED \u2014 Ollama no responde en ${ollamaUrl}:`, err)
-    console.warn("[Ollama] El bot arrancara pero las consultas fallaran hasta que Ollama este disponible.")
+    logError("Ollama", `Ping FAILED \u2014 Ollama no responde en ${ollamaUrl}: ${err}`)
+    info("Ollama", "El bot arrancara pero las consultas fallaran hasta que Ollama este disponible.")
     return false
   }
 }
 
 async function gracefulShutdown(signal: string) {
-  console.log(`\n[Bot] Received ${signal}, shutting down gracefully...`)
+  info("Bot", `Received ${signal}, shutting down gracefully...`)
+  await closeMcpClients()
   bot.stop()
-  console.log("[Bot] Bot stopped.")
+  info("Bot", "Bot stopped.")
   process.exit(0)
 }
 
@@ -211,17 +213,17 @@ async function start() {
   process.on("SIGTERM", () => gracefulShutdown("SIGTERM"))
 
   await initMcpClients()
-  console.log(`[Bot] Telegram token present: ${telegramToken ? "yes" : "no"}`)
-  console.log(`[Bot] Ollama endpoint: ${ollamaUrl}`)
+  info("Bot", `Telegram token present: ${telegramToken ? "yes" : "no"}`)
+  info("Bot", `Ollama endpoint: ${ollamaUrl}`)
   await checkOllama()
-  console.log("[Bot] Starting Telegram bot...")
+  info("Bot", "Starting Telegram bot...")
   bot.start().catch((err) => {
-    console.error("[Bot] Failed to start:", err)
+    logError("Bot", `Failed to start: ${err}`)
   })
   bot.api.getMe().then((me) => {
-    console.log(`[Bot] Bot @${me.username} is running successfully!`)
+    info("Bot", `Bot @${me.username} is running successfully!`)
   }).catch((err) => {
-    console.error("[Bot] Failed to get bot info:", err)
+    logError("Bot", `Failed to get bot info: ${err}`)
   })
 }
 
