@@ -1,8 +1,8 @@
-import { readFile, writeFile } from "node:fs/promises"
-import { join } from "node:path"
+import { writeFile } from "node:fs/promises"
 import { agentDir, memoryPath, ollamaUrl, ollamaModel } from "./config.js"
 import { ollamaTools, hasMemoryServer, callMcpTool } from "./mcp.js"
 import { loadAllSkills, detectSkills, loadSkillsContext } from "./skills.js"
+import { readContextFile } from "./cache.js"
 
 const chatHistories = new Map<number, Array<{ role: "user" | "assistant" | "tool", content: string, name?: string, tool_calls?: any[] }>>()
 
@@ -12,11 +12,11 @@ export function clearChatHistory(chatId: number) {
 }
 
 export async function askPi(chatId: number, message: string) {
-  const soul = await readFile(join(agentDir, "SOUL.md"), "utf8")
-  const user = await readFile(join(agentDir, "USER.md"), "utf8")
-  const agents = await readFile(join(agentDir, "AGENTS.md"), "utf8")
-  const currentMemory = await readFile(memoryPath, "utf8")
-  const systemTemplate = await readFile(join(agentDir, "SYSTEM.md"), "utf8")
+  const soul = await readContextFile(agentDir, "SOUL.md")
+  const user = await readContextFile(agentDir, "USER.md")
+  const agents = await readContextFile(agentDir, "AGENTS.md")
+  const currentMemory = await readContextFile(agentDir, "MEMORY.md")
+  const systemTemplate = await readContextFile(agentDir, "SYSTEM.md")
   console.log(`[Memory] Loaded MEMORY.md (${currentMemory.length} chars)`)
 
   const allSkills = await loadAllSkills()
@@ -89,6 +89,7 @@ export async function askPi(chatId: number, message: string) {
       headers: {
         "Content-Type": "application/json",
       },
+      signal: AbortSignal.timeout(30000),
       body: JSON.stringify({
         model: ollamaModel,
         messages: [

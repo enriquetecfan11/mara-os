@@ -1,11 +1,11 @@
-import { readFile } from "node:fs/promises"
-import { join } from "node:path"
 import { Bot } from "grammy"
 import { approvalMessage, hasApproval, needsApproval } from "./approvals.js"
 import { saveTelegramPhoto } from "./telegram-files.js"
 import { telegramToken, uploadsDir, ollamaUrl, ollamaModel, agentDir } from "./config.js"
 import { initMcpClients } from "./mcp.js"
-import { askPi } from "./ollama.js"
+import { askPi, clearChatHistory } from "./ollama.js"
+import { getSkillList, loadSkillsContext, reloadSkills } from "./skills.js"
+import { readContextFile } from "./cache.js"
 
 const bot = new Bot(telegramToken)
 
@@ -14,12 +14,32 @@ bot.catch((err) => {
   console.error(`[Error] Error while handling update ${ctx.update.update_id}:`, err.error)
 })
 
+bot.command("start", async (ctx) => {
+  clearChatHistory(ctx.chat.id)
+  const name = ctx.from?.first_name || "there"
+  await ctx.reply(
+    `Hola ${name}! Soy Mara, tu asistente personal.\n\n` +
+    `Puedo ayudarte con tu calendario, notas, tareas y mas.\n` +
+    `Escribe /help para ver todo lo que puedo hacer.`
+  )
+})
+
+bot.command("reset", async (ctx) => {
+  clearChatHistory(ctx.chat.id)
+  await ctx.reply("Historial limpio. Empezamos de cero.")
+})
+
 bot.command("help", async (ctx) => {
+  const skills = await getSkillList()
+  const skillList = skills.length > 0
+    ? skills.map(s => `  - ${s}`).join("\n")
+    : "  (ninguno)"
+
   const fileNames = ["SOUL.md", "USER.md", "AGENTS.md", "MEMORY.md"]
   const fileStats: string[] = []
   for (const name of fileNames) {
     try {
-      const content = await readFile(join(agentDir, name), "utf8")
+      const content = await readContextFile(agentDir, name)
       fileStats.push(`  ${name}: ${content.length} chars`)
     } catch {
       fileStats.push(`  ${name}: (no existe)`)
@@ -46,6 +66,12 @@ bot.command("help", async (ctx) => {
     "Comandos:",
     "  /help \u2014 Mostrar esta ayuda",
     "  /status \u2014 Ver estado del sistema",
+    "  /skill lista \u2014 Ver skills disponibles",
+    "  /skill nombre \u2014 Cargar un skill especifico",
+    "  /skill recargar \u2014 Recargar skills desde disco",
+    "",
+    `Skills (${skills.length}):`,
+    skillList,
   ]
 
   await ctx.reply(lines.join("\n"))
@@ -56,7 +82,7 @@ bot.command("status", async (ctx) => {
   const fileStats: string[] = []
   for (const name of fileNames) {
     try {
-      const content = await readFile(join(agentDir, name), "utf8")
+      const content = await readContextFile(agentDir, name)
       const preview = content.slice(0, 60).replace(/\n/g, " ")
       fileStats.push(`  ${name}: ${content.length} chars`)
       fileStats.push(`    Preview: "${preview}..."`)
@@ -65,6 +91,7 @@ bot.command("status", async (ctx) => {
     }
   }
 
+  const skills = await getSkillList()
   const now = new Date().toLocaleString("es-ES", {
     timeZone: process.env.TIMEZONE || "Europe/Madrid",
     dateStyle: "full",
@@ -80,9 +107,46 @@ bot.command("status", async (ctx) => {
     "",
     "Archivos de contexto:",
     ...fileStats,
+    "",
+    `Skills (${skills.length}):`,
+    ...skills.map(s => `  - ${s}`),
   ]
 
   await ctx.reply(lines.join("\n"))
+})
+
+bot.command("skill", async (ctx) => {
+  const text = ctx.message?.text
+  if (!text) return
+
+  const args = text.split(" ").slice(1)
+  const subcommand = args[0]?.toLowerCase()
+
+  if (!subcommand || subcommand === "lista") {
+    const skills = await getSkillList()
+    if (skills.length === 0) {
+      await ctx.reply("No hay skills instalados.")
+      return
+    }
+    const list = skills.map(s => `- /skill ${s}`).join("\n")
+    await ctx.reply(`Skills disponibles:\n${list}\n\nAuto-deteccion activa por keywords.`)
+    return
+  }
+
+  if (subcommand === "recargar") {
+    await reloadSkills()
+    await ctx.reply("Skills recargados.")
+    return
+  }
+
+  const skills = await getSkillList()
+  if (skills.includes(subcommand)) {
+    const context = await loadSkillsContext([subcommand])
+    await ctx.reply(`Skill "${subcommand}" cargado.\n\n${context}`)
+    return
+  }
+
+  await ctx.reply(`Skill "${subcommand}" no encontrado.\nUsa /skill lista para ver disponibles.`)
 })
 
 bot.on("message:text", async (ctx) => {
