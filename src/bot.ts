@@ -199,7 +199,17 @@ async function checkOllama() {
   }
 }
 
+async function gracefulShutdown(signal: string) {
+  console.log(`\n[Bot] Received ${signal}, shutting down gracefully...`)
+  bot.stop()
+  console.log("[Bot] Bot stopped.")
+  process.exit(0)
+}
+
 async function start() {
+  process.on("SIGINT", () => gracefulShutdown("SIGINT"))
+  process.on("SIGTERM", () => gracefulShutdown("SIGTERM"))
+
   await initMcpClients()
   console.log(`[Bot] Telegram token present: ${telegramToken ? "yes" : "no"}`)
   console.log(`[Bot] Ollama endpoint: ${ollamaUrl}`)
