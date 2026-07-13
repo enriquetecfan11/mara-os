@@ -3,6 +3,7 @@ import { agentDir, memoryPath, ollamaUrl, ollamaModel } from "./config.js"
 import { ollamaTools, hasMemoryServer, callMcpTool } from "./mcp.js"
 import { loadAllSkills, detectSkills, loadSkillsContext } from "./skills.js"
 import { readContextFile } from "./cache.js"
+import { info, error as logError, debug, warn } from "./logger.js"
 
 interface ChatSession {
   messages: Array<{ role: "user" | "assistant" | "tool", content: string, name?: string, tool_calls?: any[] }>
@@ -15,7 +16,7 @@ const CLEANUP_INTERVAL = 5 * 60 * 1000
 
 export function clearChatHistory(chatId: number) {
   chatHistories.delete(chatId)
-  console.log(`[Ollama] Chat history cleared for chat ${chatId}`)
+  info("Ollama", `Chat history cleared for chat ${chatId}`)
 }
 
 function initCleanupTimer() {
@@ -29,7 +30,7 @@ function initCleanupTimer() {
       }
     }
     if (cleaned > 0) {
-      console.log(`[Cleanup] Removed ${cleaned} inactive chat session(s)`)
+      info("Cleanup", `Removed ${cleaned} inactive chat session(s)`)
     }
   }, CLEANUP_INTERVAL)
 }
@@ -40,13 +41,13 @@ export async function askPi(chatId: number, message: string) {
   const agents = await readContextFile(agentDir, "AGENTS.md")
   const currentMemory = await readContextFile(agentDir, "MEMORY.md")
   const systemTemplate = await readContextFile(agentDir, "SYSTEM.md")
-  console.log(`[Memory] Loaded MEMORY.md (${currentMemory.length} chars)`)
+  debug("Memory", `Loaded MEMORY.md (${currentMemory.length} chars)`)
 
   const allSkills = await loadAllSkills()
   const detectedSkills = detectSkills(message, allSkills)
   const skillsContext = await loadSkillsContext(detectedSkills)
   if (detectedSkills.length > 0) {
-    console.log(`[Skills] Detected: ${detectedSkills.join(", ")}`)
+    info("Skills", `Detected: ${detectedSkills.join(", ")}`)
   }
 
   const timezone = process.env.TIMEZONE || "Europe/Madrid"
@@ -63,7 +64,7 @@ export async function askPi(chatId: number, message: string) {
     .replace("{{AGENTS}}", agents)
     .replace("{{MEMORY}}", currentMemory)
     .replace("{{SKILLS}}", skillsContext)
-  console.log(`[Prompt] System prompt ready for chat ${chatId} (${systemPrompt.length} chars)`)
+  debug("Prompt", `System prompt ready for chat ${chatId} (${systemPrompt.length} chars)`)
 
   if (!chatHistories.has(chatId)) {
     chatHistories.set(chatId, { messages: [], lastUsed: Date.now() })
@@ -82,7 +83,7 @@ export async function askPi(chatId: number, message: string) {
   let replyText = ""
 
   while (loop) {
-    console.log(`[Ollama] Sending request to ${ollamaUrl}/api/chat using model: ${ollamaModel} (history size: ${history.length})...`)
+    debug("Ollama", `Sending request to ${ollamaUrl}/api/chat using model: ${ollamaModel} (history size: ${history.length})...`)
     
     const tools = [
       ...(!hasMemoryServer ? [{
@@ -104,9 +105,9 @@ export async function askPi(chatId: number, message: string) {
       }] : []),
       ...ollamaTools
     ]
-    console.log(`[Ollama] Tools available: ${tools.map((tool: any) => tool.function?.name ?? "unknown").join(", ")}`)
+    debug("Ollama", `Tools available: ${tools.map((tool: any) => tool.function?.name ?? "unknown").join(", ")}`)
     if (!hasMemoryServer) {
-      console.log(`[Memory] Using fallback update_memory tool because Engram is not connected`)
+      info("Memory", `Using fallback update_memory tool because Engram is not connected`)
     }
 
     const response = await fetch(`${ollamaUrl}/api/chat`, {
@@ -161,7 +162,7 @@ export async function askPi(chatId: number, message: string) {
     }
 
     if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
-      console.log(`[Ollama] Received ${assistantMessage.tool_calls.length} tool call(s)`)
+      info("Ollama", `Received ${assistantMessage.tool_calls.length} tool call(s)`)
 
       const toolResults = await Promise.all(
         assistantMessage.tool_calls.map(async (toolCall) => {
@@ -176,7 +177,7 @@ export async function askPi(chatId: number, message: string) {
             }
           }
 
-          console.log(`[Tool] Executing tool "${toolName}" with arguments:`, toolArgs)
+          debug("Tool", `Executing tool "${toolName}" with arguments: ${JSON.stringify(toolArgs)}`)
 
           let resultStr = ""
           if (toolName === "update_memory") {
@@ -188,7 +189,7 @@ export async function askPi(chatId: number, message: string) {
             }
             if (newMemory) {
               await writeFile(memoryPath, newMemory, "utf8")
-              console.log(`[Memory] Updated MEMORY.md with new contents: ${newMemory}`)
+              debug("Memory", `Updated MEMORY.md with new contents: ${newMemory.slice(0, 50)}...`)
               resultStr = "Memoria actualizada correctamente."
             } else {
               resultStr = "Error: no se proporcionó contenido para actualizar la memoria."
@@ -197,7 +198,7 @@ export async function askPi(chatId: number, message: string) {
             try {
               resultStr = await callMcpTool(toolName, toolArgs)
             } catch (err: any) {
-              console.error(`[MCP] Error executing tool "${toolName}":`, err)
+              logError("MCP", `Error executing tool "${toolName}": ${err}`)
               resultStr = `Error executing tool: ${err?.message || err}`
             }
           }
@@ -213,7 +214,7 @@ export async function askPi(chatId: number, message: string) {
         }
       }
     } else {
-        console.log(`[Ollama] Final assistant message length: ${assistantMessage.content?.length ?? 0}`)
+        debug("Ollama", `Final assistant message length: ${assistantMessage.content?.length ?? 0}`)
         const finalContent = assistantMessage.content?.trim() ?? "No he podido generar una respuesta.";
         replyText = finalContent;
         loop = false;
@@ -232,7 +233,7 @@ export async function askPiWithRetry(chatId: number, message: string, maxRetries
         throw err
       }
       const delay = 1000 * Math.pow(2, attempt)
-      console.warn(`[Ollama] Request failed (attempt ${attempt + 1}/${maxRetries}), retrying in ${delay}ms:`, err.message)
+      warn("Ollama", `Request failed (attempt ${attempt + 1}/${maxRetries}), retrying in ${delay}ms: ${err.message}`)
       await new Promise(r => setTimeout(r, delay))
     }
   }
