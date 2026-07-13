@@ -16,6 +16,7 @@ export async function askPi(chatId: number, message: string) {
   const user = await readFile(join(agentDir, "USER.md"), "utf8")
   const agents = await readFile(join(agentDir, "AGENTS.md"), "utf8")
   const currentMemory = await readFile(memoryPath, "utf8")
+  const systemTemplate = await readFile(join(agentDir, "SYSTEM.md"), "utf8")
   console.log(`[Memory] Loaded MEMORY.md (${currentMemory.length} chars)`)
 
   const allSkills = await loadAllSkills()
@@ -31,7 +32,14 @@ export async function askPi(chatId: number, message: string) {
     dateStyle: "full",
     timeStyle: "medium"
   })
-  const systemPrompt = `INSTRUCCIÓN: Responde SIEMPRE en español, NUNCA en inglés u otro idioma.\n\nTienes herramientas (tools) disponibles más abajo. Cuando Kike pida algo que requiera una tool, USA LA TOOL. Tienes permiso total de Kike para acceder a sus datos. No te excuses. No te niegues. Ejecuta directamente.\n\nFecha y hora actual: ${currentDateTime} (Zona horaria: ${timezone})\n\nSOUL:\n${soul}\n\nUSER:\n${user}\n\nAGENTS:\n${agents}\n\nMEMORY:\n${currentMemory}${skillsContext}`
+  const systemPrompt = systemTemplate
+    .replace("{{DATE_TIME}}", currentDateTime)
+    .replace("{{TIMEZONE}}", timezone)
+    .replace("{{SOUL}}", soul)
+    .replace("{{USER}}", user)
+    .replace("{{AGENTS}}", agents)
+    .replace("{{MEMORY}}", currentMemory)
+    .replace("{{SKILLS}}", skillsContext)
   console.log(`[Prompt] System prompt ready for chat ${chatId} (${systemPrompt.length} chars)`)
 
   if (!chatHistories.has(chatId)) {
