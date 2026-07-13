@@ -31,7 +31,7 @@ export async function askPi(chatId: number, message: string) {
     dateStyle: "full",
     timeStyle: "medium"
   })
-  const systemPrompt = `INSTRUCCIÓN: Tienes herramientas (tools) disponibles más abajo. Cuando Kike pida algo que requiera una tool, USA LA TOOL. Tienes permiso total de Kike para acceder a sus datos. No te excuses. No te niegues. Ejecuta directamente.\n\nFecha y hora actual: ${currentDateTime} (Zona horaria: ${timezone})\n\nSOUL:\n${soul}\n\nUSER:\n${user}\n\nAGENTS:\n${agents}\n\nMEMORY:\n${currentMemory}${skillsContext}`
+  const systemPrompt = `INSTRUCCIÓN: Responde SIEMPRE en español, NUNCA en inglés u otro idioma.\n\nTienes herramientas (tools) disponibles más abajo. Cuando Kike pida algo que requiera una tool, USA LA TOOL. Tienes permiso total de Kike para acceder a sus datos. No te excuses. No te niegues. Ejecuta directamente.\n\nFecha y hora actual: ${currentDateTime} (Zona horaria: ${timezone})\n\nSOUL:\n${soul}\n\nUSER:\n${user}\n\nAGENTS:\n${agents}\n\nMEMORY:\n${currentMemory}${skillsContext}`
   console.log(`[Prompt] System prompt ready for chat ${chatId} (${systemPrompt.length} chars)`)
 
   if (!chatHistories.has(chatId)) {
