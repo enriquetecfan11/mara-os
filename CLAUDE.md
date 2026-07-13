@@ -29,12 +29,18 @@ pnpm reset-memory     # Restore MEMORY.md to git state
 
 ### Core Modules (src/)
 
+- **logger.ts**: Structured logging with colors, timestamps, and log levels.
+  - `log()`, `info()`, `debug()`, `warn()`, `error()`: Main logging functions
+  - Color-coded output: cyan (info), gray (debug), yellow (warn), red (error)
+  - Timestamps in HH:MM:SS format; output: `[14:32:55] [INFO] [Module] message`
+  - Log level filtering via `LOG_LEVEL` env var (default: "info"). Set `LOG_LEVEL=debug` to see all logs
+
 - **cache.ts**: Mtime-based file caching for context files (SOUL, USER, AGENTS, SYSTEM, MEMORY).
   - `readContextFile()`: Reads file from disk once, caches in memory. On subsequent reads, checks mtime; if unchanged, returns cached content. Automatically invalidates when file changes.
   - Reduces per-request latency: 40-60ms (5 file reads) → 1ms (cache hits)
 
 - **bot.ts**: Telegram bot handler. Commands: `/start`, `/help`, `/status`, `/reset`, `/skill`. Message handler orchestrates approval checks and calls to `askPi()`.
-  - **Graceful shutdown**: Listens for SIGINT (Ctrl+C) and SIGTERM signals, stops bot cleanly without errors.
+  - **Graceful shutdown**: Listens for SIGINT (Ctrl+C) and SIGTERM signals. Closes MCP clients cleanly (prevents Python traceback from Engram), then stops bot without errors.
   
 - **ollama.ts**: Ollama API integration. 
   - `askPi()`: Main function that constructs system prompt (from SYSTEM.md template with dynamic values), sends request with `tool_choice: "required"`, `temperature: 0.3`, and 30-second timeout to ensure tool-calling and fail-fast behavior. Parses `tool_calls` and dispatches via `callMcpTool()`. Maintains per-chat history up to 20 messages.
@@ -47,6 +53,7 @@ pnpm reset-memory     # Restore MEMORY.md to git state
 - **mcp.ts**: MCP client initialization and tool dispatch.
   - `initMcpClients()`: Reads `mcp.json`, connects to each server (stdio or HTTP), collects all tools into `ollamaTools` array formatted for Ollama's API.
   - `callMcpTool()`: Looks up client from `toolToClientMap`, calls tool, extracts text from MCP response.
+  - `closeMcpClients()`: Gracefully disconnects all MCP servers (used on SIGINT/SIGTERM). Prevents unhandled errors from child processes.
   - `hasMemoryServer`: Flag indicating if "engram" memory server is available; if not, falls back to file-based `update_memory` tool.
 
 - **skills.ts**: Dynamic skill detection and context loading.
