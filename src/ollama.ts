@@ -4,11 +4,34 @@ import { ollamaTools, hasMemoryServer, callMcpTool } from "./mcp.js"
 import { loadAllSkills, detectSkills, loadSkillsContext } from "./skills.js"
 import { readContextFile } from "./cache.js"
 
-const chatHistories = new Map<number, Array<{ role: "user" | "assistant" | "tool", content: string, name?: string, tool_calls?: any[] }>>()
+interface ChatSession {
+  messages: Array<{ role: "user" | "assistant" | "tool", content: string, name?: string, tool_calls?: any[] }>
+  lastUsed: number
+}
+
+const chatHistories = new Map<number, ChatSession>()
+const CHAT_TIMEOUT = 30 * 60 * 1000
+const CLEANUP_INTERVAL = 5 * 60 * 1000
 
 export function clearChatHistory(chatId: number) {
   chatHistories.delete(chatId)
   console.log(`[Ollama] Chat history cleared for chat ${chatId}`)
+}
+
+function initCleanupTimer() {
+  setInterval(() => {
+    const now = Date.now()
+    let cleaned = 0
+    for (const [chatId, session] of chatHistories) {
+      if (now - session.lastUsed > CHAT_TIMEOUT) {
+        chatHistories.delete(chatId)
+        cleaned++
+      }
+    }
+    if (cleaned > 0) {
+      console.log(`[Cleanup] Removed ${cleaned} inactive chat session(s)`)
+    }
+  }, CLEANUP_INTERVAL)
 }
 
 export async function askPi(chatId: number, message: string) {
@@ -43,9 +66,11 @@ export async function askPi(chatId: number, message: string) {
   console.log(`[Prompt] System prompt ready for chat ${chatId} (${systemPrompt.length} chars)`)
 
   if (!chatHistories.has(chatId)) {
-    chatHistories.set(chatId, [])
+    chatHistories.set(chatId, { messages: [], lastUsed: Date.now() })
   }
-  const history = chatHistories.get(chatId)!
+  const session = chatHistories.get(chatId)!
+  session.lastUsed = Date.now()
+  const history = session.messages
 
   history.push({ role: "user", content: message })
 
@@ -136,51 +161,53 @@ export async function askPi(chatId: number, message: string) {
     }
 
     if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
-      console.log(`[Ollama] Received tool calls:`, JSON.stringify(assistantMessage.tool_calls))
-      
-      for (const toolCall of assistantMessage.tool_calls) {
-        const toolName = toolCall.function.name
-        let toolArgs = toolCall.function.arguments
+      console.log(`[Ollama] Received ${assistantMessage.tool_calls.length} tool call(s)`)
 
-        if (typeof toolArgs === "string") {
-          try {
-            toolArgs = JSON.parse(toolArgs)
-          } catch {
-            // Keep as string
+      const toolResults = await Promise.all(
+        assistantMessage.tool_calls.map(async (toolCall) => {
+          const toolName = toolCall.function.name
+          let toolArgs = toolCall.function.arguments
+
+          if (typeof toolArgs === "string") {
+            try {
+              toolArgs = JSON.parse(toolArgs)
+            } catch {
+              // Keep as string
+            }
           }
-        }
 
-        console.log(`[Tool] Executing tool "${toolName}" with arguments:`, toolArgs)
+          console.log(`[Tool] Executing tool "${toolName}" with arguments:`, toolArgs)
 
-        let resultStr = ""
-        if (toolName === "update_memory") {
-          let newMemory = ""
-          if (toolArgs && typeof toolArgs === "object" && "content" in toolArgs) {
-            newMemory = toolArgs.content
-          } else if (typeof toolArgs === "string") {
-            newMemory = toolArgs
-          }
-          if (newMemory) {
-            await writeFile(memoryPath, newMemory, "utf8")
-            console.log(`[Memory] Updated MEMORY.md with new contents: ${newMemory}`)
-            resultStr = "Memoria actualizada correctamente."
+          let resultStr = ""
+          if (toolName === "update_memory") {
+            let newMemory = ""
+            if (toolArgs && typeof toolArgs === "object" && "content" in toolArgs) {
+              newMemory = toolArgs.content
+            } else if (typeof toolArgs === "string") {
+              newMemory = toolArgs
+            }
+            if (newMemory) {
+              await writeFile(memoryPath, newMemory, "utf8")
+              console.log(`[Memory] Updated MEMORY.md with new contents: ${newMemory}`)
+              resultStr = "Memoria actualizada correctamente."
+            } else {
+              resultStr = "Error: no se proporcionó contenido para actualizar la memoria."
+            }
           } else {
-            resultStr = "Error: no se proporcionó contenido para actualizar la memoria."
+            try {
+              resultStr = await callMcpTool(toolName, toolArgs)
+            } catch (err: any) {
+              console.error(`[MCP] Error executing tool "${toolName}":`, err)
+              resultStr = `Error executing tool: ${err?.message || err}`
+            }
           }
-        } else {
-          try {
-            resultStr = await callMcpTool(toolName, toolArgs)
-          } catch (err: any) {
-            console.error(`[MCP] Error executing tool "${toolName}":`, err)
-            resultStr = `Error executing tool: ${err?.message || err}`
-          }
-        }
 
-        history.push({
-          role: "tool",
-          content: resultStr
+          return { role: "tool" as const, content: resultStr }
         })
+      )
 
+      for (const result of toolResults) {
+        history.push(result)
         if (history.length > 20) {
           history.shift()
         }
@@ -195,3 +222,21 @@ export async function askPi(chatId: number, message: string) {
 
   return replyText || "Memoria actualizada."
 }
+
+export async function askPiWithRetry(chatId: number, message: string, maxRetries = 2): Promise<string> {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await askPi(chatId, message)
+    } catch (err: any) {
+      if (attempt === maxRetries - 1) {
+        throw err
+      }
+      const delay = 1000 * Math.pow(2, attempt)
+      console.warn(`[Ollama] Request failed (attempt ${attempt + 1}/${maxRetries}), retrying in ${delay}ms:`, err.message)
+      await new Promise(r => setTimeout(r, delay))
+    }
+  }
+  throw new Error("Unexpected: askPiWithRetry exhausted retries")
+}
+
+initCleanupTimer()
