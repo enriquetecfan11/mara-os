@@ -19,6 +19,17 @@ export function clearChatHistory(chatId: number) {
   info("Ollama", `Chat history cleared for chat ${chatId}`)
 }
 
+const activeControllers = new Map<number, AbortController>()
+
+export function cancelRequest(chatId: number) {
+  const controller = activeControllers.get(chatId)
+  if (controller) {
+    controller.abort()
+    activeControllers.delete(chatId)
+    info("Ollama", `Request cancelled for chat ${chatId}`)
+  }
+}
+
 function initCleanupTimer() {
   setInterval(() => {
     const now = Date.now()
@@ -79,58 +90,68 @@ export async function askPi(chatId: number, message: string) {
     history.shift()
   }
 
-  let loop = true
-  let replyText = ""
+  const controller = new AbortController()
+  activeControllers.set(chatId, controller)
 
-  while (loop) {
-    debug("Ollama", `Sending request to ${ollamaUrl}/api/chat using model: ${ollamaModel} (history size: ${history.length})...`)
-    
-    const tools = [
-      ...(!hasMemoryServer ? [{
-        type: "function",
-        function: {
-          name: "update_memory",
-          description: "Updates the MEMORY.md file with new or updated facts. Write the entire updated content of the MEMORY.md file.",
-          parameters: {
-            type: "object",
-            properties: {
-              content: {
-                type: "string",
-                description: "The complete, updated content for the MEMORY.md file."
-              }
-            },
-            required: ["content"]
+  const timeout = setTimeout(() => controller.abort(new Error("Timeout after 60s")), 60000)
+
+  try {
+    let loop = true
+    let replyText = ""
+
+    while (loop) {
+      if (controller.signal.aborted) {
+        throw controller.signal.reason || new Error("Request cancelled")
+      }
+
+      debug("Ollama", `Sending request to ${ollamaUrl}/api/chat using model: ${ollamaModel} (history size: ${history.length})...`)
+      
+      const tools = [
+        ...(!hasMemoryServer ? [{
+          type: "function",
+          function: {
+            name: "update_memory",
+            description: "Updates the MEMORY.md file with new or updated facts. Write the entire updated content of the MEMORY.md file.",
+            parameters: {
+              type: "object",
+              properties: {
+                content: {
+                  type: "string",
+                  description: "The complete, updated content for the MEMORY.md file."
+                }
+              },
+              required: ["content"]
+            }
           }
-        }
-      }] : []),
-      ...ollamaTools
-    ]
-    debug("Ollama", `Tools available: ${tools.map((tool: any) => tool.function?.name ?? "unknown").join(", ")}`)
-    if (!hasMemoryServer) {
-      info("Memory", `Using fallback update_memory tool because Engram is not connected`)
-    }
+        }] : []),
+        ...ollamaTools
+      ]
+      debug("Ollama", `Tools available: ${tools.map((tool: any) => tool.function?.name ?? "unknown").join(", ")}`)
+      if (!hasMemoryServer) {
+        info("Memory", `Using fallback update_memory tool because Engram is not connected`)
+      }
 
-    const response = await fetch(`${ollamaUrl}/api/chat`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      signal: AbortSignal.timeout(30000),
-      body: JSON.stringify({
-        model: ollamaModel,
-        messages: [
-          {
-            role: "system",
-            content: systemPrompt,
-          },
-          ...history,
-        ],
-        stream: false,
-        tools: tools,
-        tool_choice: "required",
-        temperature: 0.3
-      }),
-    })
+      const response = await fetch(`${ollamaUrl}/api/chat`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: ollamaModel,
+          messages: [
+            {
+              role: "system",
+              content: systemPrompt,
+            },
+            ...history,
+          ],
+          stream: false,
+          tools: tools,
+          tool_choice: "required",
+          temperature: 0.3
+        }),
+      })
 
     if (!response.ok) {
       throw new Error(`Ollama request failed: ${response.status} ${response.statusText}`)
@@ -219,9 +240,15 @@ export async function askPi(chatId: number, message: string) {
         replyText = finalContent;
         loop = false;
     }
-  }
+    }
 
-  return replyText || "Memoria actualizada."
+    return replyText || "Memoria actualizada."
+  } finally {
+    clearTimeout(timeout)
+    if (activeControllers.get(chatId) === controller) {
+      activeControllers.delete(chatId)
+    }
+  }
 }
 
 export async function askPiWithRetry(chatId: number, message: string, maxRetries = 2): Promise<string> {
@@ -229,6 +256,7 @@ export async function askPiWithRetry(chatId: number, message: string, maxRetries
     try {
       return await askPi(chatId, message)
     } catch (err: any) {
+      if (err?.name === "AbortError") throw err
       if (attempt === maxRetries - 1) {
         throw err
       }
