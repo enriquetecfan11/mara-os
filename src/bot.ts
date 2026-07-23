@@ -3,7 +3,7 @@ import { appendFile } from "node:fs/promises"
 import { join } from "node:path"
 import { approvalMessage, hasApproval, needsApproval } from "./approvals.js"
 import { saveTelegramPhoto } from "./telegram-files.js"
-import { telegramToken, uploadsDir, ollamaUrl, ollamaModel, agentDir } from "./config.js"
+import { telegramToken, telegramChatId, uploadsDir, ollamaUrl, ollamaModel, agentDir } from "./config.js"
 import { initMcpClients, closeMcpClients, callServerTool } from "./mcp.js"
 import { askPiWithRetry, clearChatHistory, cancelRequest } from "./ollama.js"
 import { getSkillList, loadSkillsContext, reloadSkills } from "./skills.js"
@@ -329,6 +329,10 @@ async function start() {
   })
   bot.api.getMe().then((me) => {
     info("Bot", `Bot @${me.username} is running successfully!`)
+    if (telegramChatId) {
+      const now = new Date().toLocaleString("es-ES", { timeZone: process.env.TIMEZONE || "Europe/Madrid", dateStyle: "full", timeStyle: "medium" })
+      bot.api.sendMessage(telegramChatId, `🤖 Mara OS iniciado\n✅ Bot @${me.username} corriendo\n🕐 ${now}`).catch((err) => logError("Bot", `Failed to send startup message: ${err}`))
+    }
   }).catch((err) => {
     logError("Bot", `Failed to get bot info: ${err}`)
   })

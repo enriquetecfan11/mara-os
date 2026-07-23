@@ -14,9 +14,11 @@ export interface McpConfig {
 }
 
 export const telegramToken = process.env.TELEGRAM_TOKEN!
+export const telegramChatId = process.env.TELEGRAM_CHAT_ID!
 export const agentDir = join(process.cwd(), "config")
 export const skillsDir = join(agentDir, "skills")
 export const uploadsDir = join(agentDir, "uploads")
 export const memoryPath = join(agentDir, "MEMORY.md")
 export const ollamaUrl = process.env.OLLAMA_URL || "http://localhost:11434"
 export const ollamaModel = process.env.OLLAMA_MODEL || "gemma4:e2b"
+export const timezone = process.env.TIMEZONE || "Europe/Madrid"
