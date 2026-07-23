@@ -1,18 +1,63 @@
 import { Bot } from "grammy"
+import { appendFile } from "node:fs/promises"
+import { join } from "node:path"
 import { approvalMessage, hasApproval, needsApproval } from "./approvals.js"
 import { saveTelegramPhoto } from "./telegram-files.js"
 import { telegramToken, uploadsDir, ollamaUrl, ollamaModel, agentDir } from "./config.js"
-import { initMcpClients, closeMcpClients } from "./mcp.js"
-import { askPi, clearChatHistory } from "./ollama.js"
+import { initMcpClients, closeMcpClients, callServerTool } from "./mcp.js"
+import { askPiWithRetry, clearChatHistory, cancelRequest } from "./ollama.js"
 import { getSkillList, loadSkillsContext, reloadSkills } from "./skills.js"
 import { readContextFile } from "./cache.js"
 import { info, error as logError } from "./logger.js"
 
+function stripMarkdown(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, m => m.replace(/```/g, "").trim())
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(/_([^_]+)_/g, "$1")
+    .replace(/~~([^~]+)~~/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^>\s+/gm, "")
+    .trim()
+}
+
 const bot = new Bot(telegramToken)
 
-bot.catch((err) => {
+const chatQueues = new Map<number, Promise<void>>()
+
+function enqueue(chatId: number, fn: () => Promise<void>): Promise<void> {
+  const prev = chatQueues.get(chatId) ?? Promise.resolve()
+  const next = prev.then(() => fn(), () => fn())
+  next.finally(() => {
+    if (chatQueues.get(chatId) === next) chatQueues.delete(chatId)
+  })
+  chatQueues.set(chatId, next)
+  return next
+}
+
+function startTyping(chatId: number) {
+  const interval = setInterval(() => {
+    bot.api.sendChatAction(chatId, "typing").catch(() => {})
+  }, 4000)
+  return interval
+}
+
+function stopTyping(interval: ReturnType<typeof setInterval>) {
+  clearInterval(interval)
+}
+
+bot.catch(async (err) => {
   const ctx = err.ctx
   logError("Bot", `Error while handling update ${ctx.update.update_id}: ${err.error}`)
+  try {
+    await ctx.reply("Ups, ocurrió un error al procesar tu mensaje. Inténtalo de nuevo.")
+  } catch {
+    // ignore reply errors
+  }
 })
 
 bot.command("start", async (ctx) => {
@@ -67,9 +112,13 @@ bot.command("help", async (ctx) => {
     "Comandos:",
     "  /help \u2014 Mostrar esta ayuda",
     "  /status \u2014 Ver estado del sistema",
+    "  /cancel \u2014 Cancelar operacion en curso",
+    "  /memory \u2014 Buscar recuerdos (ej: /memory que dije ayer)",
+    "  /memory forget <id> \u2014 Olvidar un recuerdo",
     "  /skill lista \u2014 Ver skills disponibles",
     "  /skill nombre \u2014 Cargar un skill especifico",
     "  /skill recargar \u2014 Recargar skills desde disco",
+    "  /feedback <texto> \u2014 Enviar opinion sobre el bot",
     "",
     `Skills (${skills.length}):`,
     skillList,
@@ -150,9 +199,49 @@ bot.command("skill", async (ctx) => {
   await ctx.reply(`Skill "${subcommand}" no encontrado.\nUsa /skill lista para ver disponibles.`)
 })
 
+bot.command("cancel", async (ctx) => {
+  cancelRequest(ctx.chat.id)
+  await ctx.reply("Operación cancelada.")
+})
+
+bot.command("memory", async (ctx) => {
+  const text = ctx.message?.text ?? ""
+  const args = text.split(" ").slice(1)
+  const query = args.join(" ")
+
+  const typing = startTyping(ctx.chat.id)
+  try {
+    if (query.startsWith("forget ")) {
+      const id = query.slice(7).trim()
+      const result = await callServerTool("engram", "forget", { id })
+      await ctx.reply(stripMarkdown(result || "Olvidado."))
+    } else {
+      const result = await callServerTool("engram", "recall", { query: query || "recuerdos recientes" })
+      await ctx.reply(stripMarkdown(result || "No tengo recuerdos sobre eso."))
+    }
+  } catch (err: any) {
+    await ctx.reply(`Error al consultar memoria: ${err.message}`)
+  } finally {
+    stopTyping(typing)
+  }
+})
+
+bot.command("feedback", async (ctx) => {
+  const text = ctx.message?.text ?? ""
+  const feedback = text.split(" ").slice(1).join(" ").trim()
+  if (!feedback) {
+    await ctx.reply("Usa: /feedback <tu opinión>")
+    return
+  }
+  const feedbackPath = join(agentDir, "FEEDBACK.log")
+  const timestamp = new Date().toISOString()
+  await appendFile(feedbackPath, `[${timestamp}] ${ctx.from?.username || "anon"}: ${feedback}\n`)
+  await ctx.reply("Gracias por tu feedback!")
+})
+
 bot.on("message:text", async (ctx) => {
   const username = ctx.from?.username || ctx.from?.first_name || "Unknown"
-  info("Telegram", `Received text from @${username}: "${ctx.message.text}"`)
+  info("Telegram", `Received text from @${username}: "${ctx.message.text.slice(0, 100)}"`)
 
   if (needsApproval(ctx.message.text) && !hasApproval(ctx.message.text)) {
     info("Telegram", "Message requires approval. Sending approval warning.")
@@ -160,15 +249,24 @@ bot.on("message:text", async (ctx) => {
     return
   }
 
-  const answer = await askPi(ctx.chat.id, ctx.message.text)
-  await ctx.reply(answer)
-  info("Telegram", `Replied to @${username}`)
+  await enqueue(ctx.chat.id, async () => {
+    const t0 = Date.now()
+    const typing = startTyping(ctx.chat.id)
+    try {
+      const answer = await askPiWithRetry(ctx.chat.id, ctx.message.text)
+      await ctx.reply(stripMarkdown(answer))
+      const elapsed = ((Date.now() - t0) / 1000).toFixed(1)
+      info("Telegram", `Replied to @${username} (${elapsed}s)`)
+    } finally {
+      stopTyping(typing)
+    }
+  })
 })
 
 bot.on("message:photo", async (ctx) => {
   const username = ctx.from?.username || ctx.from?.first_name || "Unknown"
   const caption = ctx.message.caption ?? "Kike ha enviado una imagen."
-  info("Telegram", `Received photo from @${username} with caption: "${caption}"`)
+  info("Telegram", `Received photo from @${username}`)
 
   if (needsApproval(caption) && !hasApproval(caption)) {
     info("Telegram", "Photo message requires approval. Sending approval warning.")
@@ -176,14 +274,23 @@ bot.on("message:photo", async (ctx) => {
     return
   }
 
-  const photo = ctx.message.photo.at(-1)!
-  info("Telegram", "Downloading photo...")
-  const imagePath = await saveTelegramPhoto(bot, telegramToken, photo.file_id, uploadsDir)
-  info("Telegram", `Photo saved to: ${imagePath}`)
+  await enqueue(ctx.chat.id, async () => {
+    const t0 = Date.now()
+    const typing = startTyping(ctx.chat.id)
+    try {
+      const photo = ctx.message.photo.at(-1)!
+      info("Telegram", "Downloading photo...")
+      const imagePath = await saveTelegramPhoto(bot, telegramToken, photo.file_id, uploadsDir)
+      info("Telegram", `Photo saved to: ${imagePath}`)
 
-  const answer = await askPi(ctx.chat.id, `${caption}\n\nImagen local: ${imagePath}`)
-  await ctx.reply(answer)
-  info("Telegram", `Replied to @${username}`)
+      const answer = await askPiWithRetry(ctx.chat.id, `${caption}\n\nImagen local: ${imagePath}`)
+      await ctx.reply(stripMarkdown(answer))
+      const elapsed = ((Date.now() - t0) / 1000).toFixed(1)
+      info("Telegram", `Replied to @${username} (${elapsed}s)`)
+    } finally {
+      stopTyping(typing)
+    }
+  })
 })
 
 async function checkOllama() {
