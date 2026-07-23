@@ -124,6 +124,34 @@ export async function callMcpTool(toolName: string, toolArgs: any): Promise<stri
   return resultStr
 }
 
+export function getToolsByServer(serverName: string): Array<{ name: string, description: string }> {
+  const client = clientsMap.get(serverName)
+  if (!client) return []
+  const tools: Array<{ name: string, description: string }> = []
+  for (const [toolName, toolClient] of toolToClientMap) {
+    if (toolClient === client) {
+      tools.push({ name: toolName, description: "" })
+    }
+  }
+  return tools
+}
+
+export async function callServerTool(serverName: string, toolName: string, toolArgs: any): Promise<string> {
+  const client = clientsMap.get(serverName)
+  if (!client) {
+    throw new Error(`Server "${serverName}" not connected`)
+  }
+  const callResult = await client.callTool({ name: toolName, arguments: toolArgs })
+  if (callResult && typeof callResult === "object" && "content" in callResult && Array.isArray(callResult.content)) {
+    const textParts = callResult.content
+      .filter((c: any) => c.type === "text")
+      .map((c: any) => c.text)
+      .join("\n")
+    return textParts
+  }
+  return JSON.stringify(callResult)
+}
+
 export async function closeMcpClients(): Promise<void> {
   try {
     for (const [name, client] of clientsMap) {
