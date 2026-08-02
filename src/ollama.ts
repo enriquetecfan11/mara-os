@@ -19,6 +19,10 @@ export function clearChatHistory(chatId: number) {
   info("Ollama", `Chat history cleared for chat ${chatId}`)
 }
 
+export function getChatHistoryMessageCount(chatId: number): number {
+  return chatHistories.get(chatId)?.messages.length ?? 0
+}
+
 const activeControllers = new Map<number, AbortController>()
 
 export function cancelRequest(chatId: number) {

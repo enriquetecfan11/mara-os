@@ -41,6 +41,15 @@ pnpm reset-memory     # Restore MEMORY.md to git state
 
 - **bot.ts**: Telegram bot handler. Commands: `/start`, `/help`, `/status`, `/reset`, `/skill`. Message handler orchestrates approval checks and calls to `askPi()`.
   - **Graceful shutdown**: Listens for SIGINT (Ctrl+C) and SIGTERM signals. Closes MCP clients cleanly (prevents Python traceback from Engram), then stops bot without errors.
+  - **Voice/audio input**: `message:voice` and `message:audio` handlers download the file to a temp path, transcribe it (`handleIncomingAudio()`), feed the transcript through the normal agent flow (same as a typed message, including approval checks), then delete the temp file. On transcription failure it replies with a short error and does not crash.
+  - **Reply modality (`deliverReply()`)**: the text reply is **always** sent first (immediate); a voice reply is added on top when `wantVoiceFor()` says so — by default only for voice/audio input (`/voz on|off` per-chat override wins, else `TELEGRAM_SEND_VOICE=true` forces global voice-on, else mirror the input). Voice output goes through Voicebox TTS and is transcoded WAV→OGG/Opus (`src/audio.ts:wavToOggOpus`, ffmpeg) so it arrives as a real Telegram **voice note** (`replyWithVoice`); falls back to `replyWithAudio` WAV if ffmpeg/opus is unavailable, and is skipped for replies >500 chars. `trySendVoice()` shows a `record_voice` chat action while generating.
+
+- **stt.ts**: Local speech-to-text on Apple Silicon via whisper.cpp (`nodejs-whisper`).
+  - `transcribeLocal(filePath)`: converts audio to 16kHz WAV (ffmpeg) and runs Whisper with Metal acceleration. Model auto-downloads/caches on first use inside `node_modules`. Language forced to `STT_LANGUAGE` (default `es`). Strips whisper timestamps and returns plain text; throws on empty output.
+  - Used by `bot.ts` when `STT_LOCAL_ENABLED` (default true); otherwise falls back to Voicebox `transcribeAudio()`.
+  - System deps: `ffmpeg` and `cmake` (whisper.cpp is compiled on first build). See `docs/STT_LOCAL.md`.
+
+- **voicebox.ts**: Voicebox REST client. `generateVoice()` (TTS output), `transcribeAudio()` (remote STT fallback), `checkVoicebox()` (startup health check). See `docs/VOICEBOX_INTEGRATION.md`.
   
 - **ollama.ts**: Ollama API integration. 
   - `askPi()`: Main function that constructs system prompt (from SYSTEM.md template with dynamic values), sends request with `tool_choice: "required"`, `temperature: 0.3`, and 30-second timeout to ensure tool-calling and fail-fast behavior. Parses `tool_calls` and dispatches via `callMcpTool()`. Maintains per-chat history up to 20 messages.
@@ -85,7 +94,7 @@ pnpm reset-memory     # Restore MEMORY.md to git state
 
 - **mcp.json**: Array of MCP server configs (name, type: "http" or "stdio", url or command, args, env).
   
-- **.env**: Runtime variables — `TELEGRAM_TOKEN`, `OLLAMA_URL`, `OLLAMA_MODEL`, `TIMEZONE`. Model defaults to `ornith:9b` (9B parameter size, reliable tool-calling). Ignored by git.
+- **.env**: Runtime variables — `TELEGRAM_TOKEN`, `OLLAMA_URL`, `OLLAMA_MODEL`, `TIMEZONE`, voice output (`VOICEBOX_URL`, `VOICEBOX_ENABLED`, `VOICEBOX_PROFILE`, `TELEGRAM_SEND_VOICE`), and voice input / STT (`STT_LOCAL_ENABLED`, `STT_MODEL`, `STT_LANGUAGE`). Model defaults to `ornith:9b` (9B parameter size, reliable tool-calling). Full table in `docs/configuration/environment.md`. Ignored by git.
 
 ## Ollama Integration Details
 

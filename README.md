@@ -12,6 +12,7 @@ El proyecto está diseñado para ser sencillo, legible y fácil de personalizar.
 - **Memoria persistente**: Usa `MEMORY.md` como memoria local persistente y puede conectar servidores MCP de memoria si están disponibles.
 - **Control de seguridad**: Flujo básico de aprobación para acciones externas críticas.
 - **Soporte multimedia**: Descarga automática de imágenes enviadas por Telegram a un directorio local de subidas para su posterior procesamiento.
+- **Síntesis de voz**: Genera audio con Voicebox TTS y lo envía junto con la respuesta de texto. Activable/desactivable por chat con el comando `/voz on|off`.
 
 ## Requisitos
 
@@ -19,6 +20,7 @@ El proyecto está diseñado para ser sencillo, legible y fácil de personalizar.
 - pnpm o npm
 - Un bot de Telegram (puedes crear uno con [@BotFather](https://t.me/BotFather))
 - Ollama instalado y ejecutándose localmente
+- (Opcional) Voicebox instalado y ejecutándose para síntesis de voz
 
 ## Instalación y Configuración
 
@@ -38,7 +40,25 @@ El proyecto está diseñado para ser sencillo, legible y fácil de personalizar.
    OLLAMA_URL=http://localhost:11434
    OLLAMA_MODEL=gemma4:e2b
    TIMEZONE=Europe/Madrid
+   VOICEBOX_URL=http://192.168.1.79:17493
+   VOICEBOX_ENABLED=true
+   VOICEBOX_PROFILE=Alex
+   TELEGRAM_SEND_VOICE=true
    ```
+
+### Variables de Configuración
+
+- **`TELEGRAM_TOKEN`**: Token del bot de Telegram (obligatorio).
+- **`TELEGRAM_CHAT_ID`**: ID del chat donde enviar mensajes de startup (opcional).
+- **`OLLAMA_URL`**: URL del servidor Ollama (default: `http://localhost:11434`).
+- **`OLLAMA_MODEL`**: Modelo a usar en Ollama (default: `llama3`).
+- **`TIMEZONE`**: Zona horaria (default: `Europe/Madrid`).
+- **`VOICEBOX_URL`**: URL del servidor Voicebox para TTS (default: `http://192.168.1.79:17493`).
+- **`VOICEBOX_ENABLED`**: Habilita síntesis de voz (`true`/`false`, default: `false`).
+- **`VOICEBOX_PROFILE`**: Nombre del perfil de voz en Voicebox (default: `Alex`).
+- **`TELEGRAM_SEND_VOICE`**: Envía audio por defecto en nuevos chats (`true`/`false`, default: `false`). Se puede alternar por chat con `/voz on|off`.
+
+**Nota**: Las respuestas de más de 500 caracteres envían solo texto para evitar sobrecarga. El audio se genera en español (`language: "es"`).
 
 ## Archivos de Contexto (`config/`)
 

@@ -165,3 +165,17 @@ export async function closeMcpClients(): Promise<void> {
     logError("MCP", `Error closing clients: ${err}`)
   }
 }
+
+export function getConnectedMcpServerNames(): string[] {
+  return Array.from(clientsMap.keys())
+}
+
+export function getRegisteredToolNames(): string[] {
+  return ollamaTools
+    .map((tool: any) => tool?.function?.name)
+    .filter((name): name is string => typeof name === "string" && name.length > 0)
+}
+
+export function getMemoryMode(): "engram" | "fallback MEMORY.md" {
+  return hasMemoryServer ? "engram" : "fallback MEMORY.md"
+}

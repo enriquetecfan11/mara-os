@@ -7,6 +7,7 @@
 | `/start` | Inicia la conversación, limpia el historial y saluda | `bot.ts:63` |
 | `/help` | Muestra ayuda completa con modelo, contexto y skills | `bot.ts:78` |
 | `/status` | Muestra estado del sistema (fecha, modelo, archivos de contexto, skills) | `bot.ts:130` |
+| `/context` | Muestra un resumen estructurado del contexto de ejecución actual | `bot.ts:223` |
 | `/reset` | Limpia el historial de conversación del chat actual | `bot.ts:73` |
 | `/cancel` | Cancela la operación en curso (aborta request a Ollama) | `bot.ts:202` |
 | `/skill lista` | Lista skills disponibles | `bot.ts:175` |
