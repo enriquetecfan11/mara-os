@@ -16,6 +16,7 @@ memoryPath: string          // path a config/MEMORY.md
 ollamaUrl: string           // OLLAMA_URL (default: http://localhost:11434)
 ollamaModel: string         // OLLAMA_MODEL (default: gemma4:e2b)
 timezone: string            // TIMEZONE (default: Europe/Madrid)
+brainWsUrl: string          // MARA_BRAIN_WS_URL (default: "", vacío = desactivado)
 
 interface McpServerConfig {
   name: string
@@ -29,6 +30,29 @@ interface McpServerConfig {
 interface McpConfig {
   servers: McpServerConfig[]
 }
+```
+
+### src/events.ts
+
+Servidor WebSocket "brain" y protocolo de eventos v1 hacia Mara UI. No-bloqueante:
+si `MARA_BRAIN_WS_URL` está vacío o el bridge no conecta, todo es un no-op.
+
+```typescript
+type MaraState = "idle" | "listening" | "thinking" | "speaking" | "seeing" | "error" | "offline"
+
+interface MaraEventEnvelope<T = unknown> { type: string; version: number; timestamp: number; data: T }
+interface ConfirmRequest { id: string; title: string; message: string; action: string }
+
+startUiEvents(): void                       // Arranca el servidor (log + no-op si falla)
+closeUiEvents(): void                       // Cierra el servidor (shutdown limpio)
+emit(type: string, data: unknown): void     // Envelope v1 a todos los clientes
+setState(state: MaraState): void            // mara:state (dedup si no cambió)
+emitMessage(text: string): void             // mara:message
+emitNetwork(connected: boolean): void       // mara:network
+emitConfirm(request: ConfirmRequest): void  // mara:confirm
+emitError(message?: string): void           // mara:error
+getState(): MaraState
+isUiEnabled(): boolean
 ```
 
 ### src/logger.ts
@@ -135,6 +159,7 @@ start(): Promise<void>
 
 ```
 start()
+├── startUiEvents()         → Arrancar servidor WebSocket brain (no-bloqueante)
 ├── initMcpClients()        → Conectar servidores MCP
 ├── checkOllama()           → Verificar que Ollama responde
 ├── bot.start()             → Iniciar bot de Telegram

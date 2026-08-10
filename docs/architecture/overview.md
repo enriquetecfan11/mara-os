@@ -8,31 +8,30 @@ Mara OS es un asistente personal que conecta Telegram, un LLM local (Ollama) y s
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                     Telegram (Usuario)                       │
+│                    Telegram (Usuario)                       │
 └───────────────────┬─────────────────────────────────────────┘
                     │
                     ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                    bot.ts (Handler)                          │
-│  • Recibe mensajes de texto y fotos                         │
+│  • Recibe mensajes de texto, fotos y audio                  │
 │  • Encola peticiones por chat (evita race conditions)       │
 │  • Muestra "escribiendo..." cada 4s                         │
 │  • Limpia markdown de las respuestas                        │
 │  • Maneja comandos: /start, /help, /status, /reset, etc.    │
-└───────────────────┬─────────────────────────────────────────┘
-                    │
-                    ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    ollama.ts (Orquestador)                   │
-│  • Construye system prompt desde SYSTEM.md + placeholders    │
-│  • Detecta skills relevantes al mensaje                     │
-│  • Envía a Ollama con tool_choice: required                 │
-│  • Bucle: tool_calls → ejecución MCP → historial → repetir  │
-│  • Timeout: 60s | Retry: backoff exponencial                │
-│  • Mantiene historial por chat (máx 20 mensajes)            │
-└───────────────────┬─────────────────────────────────────────┘
-                    │
-                    ▼
+│  • Emite estados/eventos a events.ts (Mara UI)              │
+└───────┬──────────────────────────────┬──────────────────────┘
+        │                              │
+        ▼                              ▼
+┌───────────────────────────┐  ┌──────────────────────────────┐
+│   events.ts (Mara UI)     │  │   ollama.ts (Orquestador)    │
+│  • Servidor WS "brain"     │  │  • Construye system prompt   │
+│  • Protocolo v1 envelopes  │  │  • tool_choice: required     │
+│  • No-bloqueante/re-sync   │  │  • Bucle tools → historial   │
+│  • events → bridge → UI    │  │  • Timeout 60s + retry       │
+└───────────────────────────┘  └──────────────┬───────────────┘
+                                              │
+                                              ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                    mcp.ts (Dispatcher)                       │
 │  • Conecta servidores MCP (stdio y HTTP)                    │

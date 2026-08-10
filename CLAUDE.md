@@ -60,10 +60,18 @@ pnpm reset-memory     # Restore MEMORY.md to git state
   - **Chat session cleanup**: Inactive chat sessions are auto-removed after 30 minutes to prevent memory leaks. Cleanup runs every 5 minutes.
 
 - **mcp.ts**: MCP client initialization and tool dispatch.
-  - `initMcpClients()`: Reads `mcp.json`, connects to each server (stdio or HTTP), collects all tools into `ollamaTools` array formatted for Ollama's API.
+  - `initMcpClients()`: Reads `mcp.json`, connects to **all servers in parallel** (Promise.allSettled) with a **15s timeout per server** (Promise.race + AbortSignal.timeout). Bot starts even if servers are unreachable. HTTP transports get `AbortSignal.timeout` on requestInit.
   - `callMcpTool()`: Looks up client from `toolToClientMap`, calls tool, extracts text from MCP response.
   - `closeMcpClients()`: Gracefully disconnects all MCP servers (used on SIGINT/SIGTERM). Prevents unhandled errors from child processes.
   - `hasMemoryServer`: Flag indicating if "engram" memory server is available; if not, falls back to file-based `update_memory` tool.
+
+- **events.ts**: WebSocket "brain" server for Mara UI (protocolo de eventos v1).
+  - `startUiEvents()`: Listens on `MARA_BRAIN_WS_URL` (empty = disabled). Non-blocking; accepts new connections anytime.
+  - `emit(type, data)`: Broadcasts v1 envelope `{ type, version, timestamp, data }` to all connected clients.
+  - `setState(state)`: Dedup `mara:state` transitions (`idle`/`listening`/`thinking`/`speaking`/`seeing`/`error`/`offline`).
+  - `emitMessage(text)`: `mara:message` with response text.
+  - `emitConfirm(request)`: `mara:confirm` for approval flow.
+  - Re-sync: sends current state, last message, and network status to each newly connected client.
 
 - **skills.ts**: Dynamic skill detection and context loading.
   - Each skill is a markdown file in `config/skills/` with frontmatter (`name`, `keywords`).

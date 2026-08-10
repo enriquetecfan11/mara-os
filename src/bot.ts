@@ -1,5 +1,6 @@
 import { Bot, InputFile, type Context } from "grammy"
-import { appendFile, unlink } from "node:fs/promises"
+import { randomUUID } from "node:crypto"
+import { appendFile, unlink, writeFile, mkdir } from "node:fs/promises"
 import { join } from "node:path"
 import { approvalMessage, hasApproval, needsApproval } from "./approvals.js"
 import { saveTelegramPhoto, saveTelegramFile } from "./telegram-files.js"
@@ -8,10 +9,11 @@ import { initMcpClients, closeMcpClients, callServerTool, getConnectedMcpServerN
 import { askPiWithRetry, clearChatHistory, cancelRequest, getChatHistoryMessageCount } from "./ollama.js"
 import { getSkillList, loadSkillsContext, reloadSkills } from "./skills.js"
 import { readContextFile } from "./cache.js"
-import { info, error as logError } from "./logger.js"
+import { info, error as logError, warn } from "./logger.js"
 import { generateVoice, transcribeAudio, checkVoicebox } from "./voicebox.js"
 import { transcribeLocal } from "./stt.js"
 import { wavToOggOpus } from "./audio.js"
+import { startUiEvents, closeUiEvents, setState, emitMessage, emitConfirm, emitError, setCommandHandler, setAudioHandler, type UiCommand } from "./events.js"
 
 function stripMarkdown(text: string): string {
   return text
@@ -86,6 +88,7 @@ const bot = new Bot(telegramToken)
 
 const chatQueues = new Map<number, Promise<void>>()
 const voiceOverrides = new Map<number, boolean>()
+const pendingConfirms = new Map<string, { chatId: number; message: string }>()
 
 function wantVoiceFor(chatId: number, isAudioInput: boolean): boolean {
   if (voiceOverrides.has(chatId)) return voiceOverrides.get(chatId)!  // /voz manda
@@ -93,10 +96,24 @@ function wantVoiceFor(chatId: number, isAudioInput: boolean): boolean {
   return isAudioInput                                                // default: imitar entrada
 }
 
+// Notifica a Mara UI (mara:confirm) cuando una acción requiere aprobación.
+// Solo emite el evento; Telegram mantiene su flujo actual con el mensaje "Confirmo".
+function emitConfirmRequest(message: string, chatId: number): void {
+  const id = randomUUID()
+  pendingConfirms.set(id, { chatId, message })
+  emitConfirm({
+    id,
+    title: "Confirmación requerida",
+    message: message.slice(0, 300),
+    action: "Acción externa (fuera de Telegram)",
+  })
+}
+
 // Genera y envía la respuesta como NOTA DE VOZ (OGG/Opus). Devuelve true si se envió audio.
 // No aplica si el texto es muy largo; si Voicebox o la transcodificación fallan, no rompe.
 async function trySendVoice(ctx: Context, text: string): Promise<boolean> {
   if (text.length > 500) return false
+  setState("speaking")
   const action = startAction(ctx.chat!.id, "record_voice")
   try {
     const wav = await generateVoice(text)
@@ -114,6 +131,7 @@ async function trySendVoice(ctx: Context, text: string): Promise<boolean> {
     return false
   } finally {
     stopAction(action)
+    setState("idle")
   }
 }
 
@@ -158,9 +176,26 @@ function stopTyping(interval: ReturnType<typeof setInterval>) {
   stopAction(interval)
 }
 
+/**
+ * ¿La transcripción contiene voz real? Descarta clips donde whisper solo
+ * detectó música, ruido o silencio (los marca entre corchetes como
+ * "[Música]", "[♪]"), o donde no haya palabra hablada. Evita que el mic
+ * capte la propia salida de audio y genere bucles de respuestas.
+ */
+function isMeaningfulTranscription(transcript: string): boolean {
+  const normalized = transcript.replace(/[\[\]\W_]+/g, " ").trim()
+  if (!normalized) return false
+  const words = normalized.split(/\s+/).filter((w) => w.length >= 2)
+  if (words.length < 2) return false
+  if (/^\s*[♪♫]/.test(transcript)) return false
+  return true
+}
+
 bot.catch(async (err) => {
   const ctx = err.ctx
   logError("Bot", `Error while handling update ${ctx.update.update_id}: ${err.error}`)
+  setState("error")
+  emitError(String(err.error))
   try {
     await ctx.reply("Ups, ocurrió un error al procesar tu mensaje. Inténtalo de nuevo.")
   } catch {
@@ -421,6 +456,7 @@ bot.on("message:text", async (ctx) => {
 
   if (needsApproval(ctx.message.text) && !hasApproval(ctx.message.text)) {
     info("Telegram", "Message requires approval. Sending approval warning.")
+    emitConfirmRequest(ctx.message.text, ctx.chat.id)
     await ctx.reply(approvalMessage)
     return
   }
@@ -429,12 +465,19 @@ bot.on("message:text", async (ctx) => {
     const t0 = Date.now()
     const typing = startTyping(ctx.chat.id)
     try {
+      setState("thinking")
       const answer = await askPiWithRetry(ctx.chat.id, ctx.message.text)
       const stripped = stripMarkdown(answer)
       stopTyping(typing) // ya tenemos la respuesta; deliverReply gestiona su propio indicador de voz
+      emitMessage(stripped)
       await deliverReply(ctx, stripped, false)
+      setState("idle")
       const elapsed = ((Date.now() - t0) / 1000).toFixed(1)
       info("Telegram", `Replied to @${username} (${elapsed}s)`)
+    } catch (err: any) {
+      logError("Bot", `Failed to process message: ${err}`)
+      setState("error")
+      emitError(err?.message)
     } finally {
       stopTyping(typing)
     }
@@ -448,6 +491,7 @@ bot.on("message:photo", async (ctx) => {
 
   if (needsApproval(caption) && !hasApproval(caption)) {
     info("Telegram", "Photo message requires approval. Sending approval warning.")
+    emitConfirmRequest(caption, ctx.chat.id)
     await ctx.reply(approvalMessage)
     return
   }
@@ -456,17 +500,25 @@ bot.on("message:photo", async (ctx) => {
     const t0 = Date.now()
     const typing = startTyping(ctx.chat.id)
     try {
+      setState("seeing")
       const photo = ctx.message.photo.at(-1)!
       info("Telegram", "Downloading photo...")
       const imagePath = await saveTelegramPhoto(bot, telegramToken, photo.file_id, uploadsDir)
       info("Telegram", `Photo saved to: ${imagePath}`)
 
+      setState("thinking")
       const answer = await askPiWithRetry(ctx.chat.id, `${caption}\n\nImagen local: ${imagePath}`)
       const stripped = stripMarkdown(answer)
       stopTyping(typing)
+      emitMessage(stripped)
       await deliverReply(ctx, stripped, false)
+      setState("idle")
       const elapsed = ((Date.now() - t0) / 1000).toFixed(1)
       info("Telegram", `Replied to @${username} (${elapsed}s)`)
+    } catch (err: any) {
+      logError("Bot", `Failed to process photo: ${err}`)
+      setState("error")
+      emitError(err?.message)
     } finally {
       stopTyping(typing)
     }
@@ -482,6 +534,7 @@ async function handleIncomingAudio(ctx: Context, fileId: string, ext: string) {
     const typing = startTyping(ctx.chat!.id)
     let audioPath: string | undefined
     try {
+      setState("listening")
       info("Telegram", "Downloading audio...")
       audioPath = await saveTelegramFile(bot, telegramToken, fileId, uploadsDir, ext)
 
@@ -492,6 +545,7 @@ async function handleIncomingAudio(ctx: Context, fileId: string, ext: string) {
           : await transcribeAudio(audioPath)
       } catch (err) {
         logError("Telegram", `Transcription failed: ${err}`)
+        setState("error")
         await ctx.reply("No pude entender el audio. Prueba de nuevo o escríbeme el mensaje.")
         return
       }
@@ -500,16 +554,24 @@ async function handleIncomingAudio(ctx: Context, fileId: string, ext: string) {
 
       if (needsApproval(transcript) && !hasApproval(transcript)) {
         info("Telegram", "Transcribed message requires approval. Sending approval warning.")
+        emitConfirmRequest(transcript, ctx.chat!.id)
         await ctx.reply(approvalMessage)
         return
       }
 
+      setState("thinking")
       const answer = await askPiWithRetry(ctx.chat!.id, transcript)
       const stripped = stripMarkdown(answer)
       stopTyping(typing)
+      emitMessage(stripped)
       await deliverReply(ctx, stripped, true)
+      setState("idle")
       const elapsed = ((Date.now() - t0) / 1000).toFixed(1)
       info("Telegram", `Replied to @${username} (${elapsed}s)`)
+    } catch (err: any) {
+      logError("Bot", `Failed to process audio: ${err}`)
+      setState("error")
+      emitError(err?.message)
     } finally {
       stopTyping(typing)
       if (audioPath) {
@@ -537,13 +599,142 @@ async function checkOllama() {
   } catch (err) {
     logError("Ollama", `Ping FAILED \u2014 Ollama no responde en ${ollamaUrl}: ${err}`)
     info("Ollama", "El bot arrancara pero las consultas fallaran hasta que Ollama este disponible.")
+    setState("offline")
     return false
   }
+}
+
+function registerCommandHandler(): void {
+  setCommandHandler((cmd: UiCommand) => {
+    const chatId = telegramChatId ? Number(telegramChatId) : 0
+
+    switch (cmd.type) {
+      case "mara:interrupt":
+        info("Events", "UI interrupt received")
+        cancelRequest(chatId)
+        break
+
+      case "mara:confirm-response": {
+        const pending = pendingConfirms.get(cmd.data.id)
+        if (!pending) {
+          warn("Events", `Confirm ${cmd.data.id} not found or already resolved`)
+          return
+        }
+        pendingConfirms.delete(cmd.data.id)
+        if (cmd.data.accepted) {
+          info("Events", `Confirm ${cmd.data.id} accepted — processing`)
+          const confirmedMessage = `Confirmo ${pending.message}`
+          enqueue(pending.chatId, async () => {
+            const typing = startTyping(pending.chatId)
+            try {
+              setState("thinking")
+              const answer = await askPiWithRetry(pending.chatId, confirmedMessage)
+              const stripped = stripMarkdown(answer)
+              stopTyping(typing)
+              emitMessage(stripped)
+              await bot.api.sendMessage(pending.chatId, stripped)
+              setState("idle")
+            } catch (err: any) {
+              logError("Bot", `Failed to process confirmed message: ${err}`)
+              setState("error")
+              emitError(err?.message)
+            } finally {
+              stopTyping(typing)
+            }
+          })
+        } else {
+          info("Events", `Confirm ${cmd.data.id} rejected`)
+          bot.api.sendMessage(pending.chatId, "Acción cancelada.").catch(() => {})
+        }
+        break
+      }
+
+      case "mara:start-listening":
+        info("Events", "UI start-listening received")
+        setState("listening")
+        break
+
+      case "mara:stop-listening":
+        info("Events", "UI stop-listening received")
+        setState("idle")
+        break
+
+      case "mara:settings":
+        info("Events", `UI settings: ${JSON.stringify(cmd.data)}`)
+        break
+    }
+  })
+}
+
+// Procesa audio PCM del micrófono del navegador (reenviado por el bridge):
+// lo transcribe y responde por el mismo flujo que un mensaje de Telegram.
+async function handleBrowserAudio(wav: Buffer): Promise<void> {
+  const chatId = telegramChatId ? Number(telegramChatId) : 0
+  const audioPath = join(uploadsDir, `browser-${Date.now()}.wav`)
+  let transcript: string | undefined
+  const t0 = Date.now()
+
+  await enqueue(chatId, async () => {
+    try {
+      await mkdir(uploadsDir, { recursive: true })
+      await writeFile(audioPath, wav)
+      const durSec = wav.length / 32000
+      info("Telegram", `[mic] clip: ${wav.length} bytes (${durSec.toFixed(2)}s), ruta=${audioPath}`)
+      setState("listening")
+      try {
+        transcript = sttLocalEnabled
+          ? await transcribeLocal(audioPath)
+          : await transcribeAudio(audioPath)
+        info("Telegram", `[mic] transcripción (${((Date.now() - t0) / 1000).toFixed(2)}s): "${transcript}"`)
+      } catch (err) {
+        logError("Telegram", `[mic] transcription failed: ${err}`)
+        setState("error")
+        emitError("No pude entender el audio del micrófono del navegador.")
+        return
+      }
+
+      // Filtro de realimentación: si whisper no detectó voz (solo música,
+      // ruido o silencio, marcado con [...]), no procesamos ese clip para
+      // evitar bucles donde el mic captura la propia salida de audio.
+      const meaningful = isMeaningfulTranscription(transcript)
+      info("Telegram", `[mic] ¿voz real? ${meaningful ? "SÍ" : "NO"} → ${meaningful ? "procesando" : "ignorando clip"}`)
+      if (!meaningful) {
+        info("Telegram", `[mic] Ignored (sin voz): "${transcript}"`)
+        setState("idle")
+        return
+      }
+
+      setState("thinking")
+      info("Telegram", `[mic] enviando a Ollama (${transcript.slice(0, 60)})…`)
+      const answer = await askPiWithRetry(chatId, transcript)
+      const stripped = stripMarkdown(answer)
+      info("Telegram", `[mic] respuesta Ollama (${((Date.now() - t0) / 1000).toFixed(2)}s): "${stripped.slice(0, 80)}"`)
+      emitMessage(stripped)
+      if (telegramChatId) {
+        await bot.api.sendMessage(chatId, stripped)
+      }
+      setState("idle")
+      info("Telegram", `[mic] Replied to browser audio (audio)`)
+    } catch (err: any) {
+      logError("Bot", `[mic] Failed to process browser audio: ${err}`)
+      setState("error")
+      emitError(err?.message)
+    } finally {
+      await unlink(audioPath).catch(() => {})
+    }
+  })
+}
+
+function registerAudioHandler(): void {
+  setAudioHandler((wav) => {
+    void handleBrowserAudio(wav)
+  })
 }
 
 async function gracefulShutdown(signal: string) {
   info("Bot", `Received ${signal}, shutting down gracefully...`)
   await closeMcpClients()
+  closeUiEvents()
   bot.stop()
   info("Bot", "Bot stopped.")
   process.exit(0)
@@ -553,23 +744,30 @@ async function start() {
   process.on("SIGINT", () => gracefulShutdown("SIGINT"))
   process.on("SIGTERM", () => gracefulShutdown("SIGTERM"))
 
+  startUiEvents()
+  registerCommandHandler()
+  registerAudioHandler()
   await initMcpClients()
   info("Bot", `Telegram token present: ${telegramToken ? "yes" : "no"}`)
   info("Bot", `Ollama endpoint: ${ollamaUrl}`)
   await checkOllama()
   await checkVoicebox()
   info("Bot", "Starting Telegram bot...")
-  bot.start().catch((err) => {
-    logError("Bot", `Failed to start: ${err}`)
-  })
-  bot.api.getMe().then((me) => {
+
+  try {
+    const me = await bot.api.getMe()
     info("Bot", `Bot @${me.username} is running successfully!`)
     if (telegramChatId) {
       const now = new Date().toLocaleString("es-ES", { timeZone: process.env.TIMEZONE || "Europe/Madrid", dateStyle: "full", timeStyle: "medium" })
-      bot.api.sendMessage(telegramChatId, `🤖 Mara OS iniciado\n✅ Bot @${me.username} corriendo\n🕐 ${now}`).catch((err) => logError("Bot", `Failed to send startup message: ${err}`))
+      await bot.api.sendMessage(telegramChatId, `🤖 Mara OS iniciado\n✅ Bot @${me.username} corriendo\n🕐 ${now}`)
+      info("Bot", `Startup message sent to chat ${telegramChatId}`)
     }
-  }).catch((err) => {
-    logError("Bot", `Failed to get bot info: ${err}`)
+  } catch (err) {
+    logError("Bot", `Failed to start: ${err}`)
+  }
+
+  bot.start().catch((err) => {
+    logError("Bot", `Bot polling failed: ${err}`)
   })
 }
 

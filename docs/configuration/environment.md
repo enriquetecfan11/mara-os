@@ -14,7 +14,7 @@ El bot se configura mediante variables de entorno en un archivo `.env` (gitignor
 |---|---|---|
 | `TELEGRAM_CHAT_ID` | Chat ID para notificaciones de inicio | — |
 | `OLLAMA_URL` | URL del servidor Ollama | `http://localhost:11434` |
-| `OLLAMA_MODEL` | Modelo de Ollama a usar | `gemma4:e2b` |
+| `OLLAMA_MODEL` | Modelo de Ollama a usar | `ornith:9b` |
 | `TIMEZONE` | Zona horaria para fechas | `Europe/Madrid` |
 | `LOG_LEVEL` | Nivel de logging (`debug`, `info`, `warn`, `error`) | `info` |
 
@@ -40,13 +40,25 @@ El bot se configura mediante variables de entorno en un archivo `.env` (gitignor
 
 Ver detalle en [STT local (Whisper)](../STT_LOCAL.md).
 
+## Integración con Mara UI (protocolo de eventos v1)
+
+| Variable | Descripción | Default |
+|---|---|---|
+| `MARA_BRAIN_WS_URL` | URL del servidor WebSocket "brain" que emite eventos v1 hacia Mara UI (el bridge de mara-ui se conecta a esta misma URL). Vacío = desactivado | — |
+
+- El servidor es **no-bloqueante**: si el bridge no está disponible, mara-os sigue funcionando (Telegram no se ve afectado).
+- El servidor **no se reconecta**: acepta nuevas conexiones cuando el bridge vuelve, y re-sincroniza estado, último mensaje y estado de red con cada cliente.
+- Ejemplo: `MARA_BRAIN_WS_URL=ws://0.0.0.0:9000` (`0.0.0.0` para que el bridge lo alcance en red; `localhost` para solo local).
+
+Eventos emitidos: `mara:state` (`idle`/`listening`/`thinking`/`speaking`/`seeing`/`error`/`offline`), `mara:message`, `mara:network`, `mara:confirm`. Ver el [README](../../README.md#integración-con-mara-ui) y `src/events.ts`.
+
 ## Archivo .env
 
 ```env
 TELEGRAM_TOKEN=tu_token_de_telegram
 TELEGRAM_CHAT_ID=123456789
 OLLAMA_URL=http://localhost:11434
-OLLAMA_MODEL=gemma4:e2b
+OLLAMA_MODEL=ornith:9b
 TIMEZONE=Europe/Madrid
 
 # Voz de salida (Voicebox TTS)
@@ -59,6 +71,10 @@ TELEGRAM_SEND_VOICE=true
 STT_LOCAL_ENABLED=true
 STT_MODEL=large-v3-turbo
 STT_LANGUAGE=es
+
+# Integración con Mara UI (protocolo de eventos v1). Vacío = desactivado.
+# El bridge de mara-ui se conecta a esta misma URL.
+MARA_BRAIN_WS_URL=ws://0.0.0.0:9000
 ```
 
 ## Configuración Inicial
@@ -71,5 +87,5 @@ cp .env.example .env
 ## Notas
 
 - `TELEGRAM_TOKEN` es obligatorio para que el bot funcione.
-- El modelo de Ollama debe soportar tool calling. Modelos recomendados: `gemma4:e2b`, `ornith:9b`.
+- El modelo de Ollama debe soportar tool calling. Modelo recomendado: `ornith:9b`.
 - `LOG_LEVEL=debug` es útil para depuración de tool_calls y diagnóstico.
