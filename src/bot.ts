@@ -4,7 +4,7 @@ import { appendFile, unlink, writeFile, mkdir } from "node:fs/promises"
 import { join } from "node:path"
 import { approvalMessage, hasApproval, needsApproval } from "./approvals.js"
 import { saveTelegramPhoto, saveTelegramFile } from "./telegram-files.js"
-import { telegramToken, telegramChatId, uploadsDir, ollamaUrl, ollamaModel, agentDir, timezone, voiceboxEnabled, telegramSendVoiceDefault, sttLocalEnabled } from "./config.js"
+import { telegramToken, telegramChatId, uploadsDir, ollamaUrl, ollamaModel, agentDir, timezone, voiceboxEnabled, telegramSendVoiceDefault, sttLocalEnabled, maraUserName } from "./config.js"
 import { initMcpClients, closeMcpClients, callServerTool, getConnectedMcpServerNames, getRegisteredToolNames, getMemoryMode } from "./mcp.js"
 import { askPiWithRetry, clearChatHistory, cancelRequest, getChatHistoryMessageCount } from "./ollama.js"
 import { getSkillList, loadSkillsContext, reloadSkills } from "./skills.js"
@@ -711,7 +711,12 @@ async function handleBrowserAudio(wav: Buffer): Promise<void> {
       info("Telegram", `[mic] respuesta Ollama (${((Date.now() - t0) / 1000).toFixed(2)}s): "${stripped.slice(0, 80)}"`)
       emitMessage(stripped)
       if (telegramChatId) {
-        await bot.api.sendMessage(chatId, stripped)
+        // Espejado a Telegram: transcripción del usuario + respuesta de Mara.
+        const mirrored = `🎤 ${maraUserName}: ${transcript}\n\nMara: ${stripped}`
+        await bot.api.sendMessage(chatId, mirrored)
+        info("Telegram", `[mic] Enviado a Telegram (chat ${chatId})`)
+      } else {
+        warn("Telegram", "[mic] TELEGRAM_CHAT_ID no configurado: no se envió la transcripción/respuesta a Telegram")
       }
       setState("idle")
       info("Telegram", `[mic] Replied to browser audio (audio)`)

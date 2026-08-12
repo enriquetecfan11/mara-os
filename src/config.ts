@@ -32,6 +32,9 @@ export const voiceboxProfile = process.env.VOICEBOX_PROFILE || "Mara"
 export const voiceboxTranscribeModel = process.env.VOICEBOX_TRANSCRIBE_MODEL || "whisper-turbo"
 export const telegramSendVoiceDefault = process.env.TELEGRAM_SEND_VOICE === "true"
 // STT local (transformers.js / whisper-WASM). Activado por defecto; se desactiva con STT_LOCAL_ENABLED=false.
+// Nombre con el que se etiqueta al usuario en los mensajes espejados a Telegram
+// desde el micrófono del navegador/UI (p. ej. "Kike").
+export const maraUserName = process.env.MARA_USER_NAME || "Kike"
 export const sttLocalEnabled = process.env.STT_LOCAL_ENABLED !== "false"
 // Modelo whisper para transformers.js (Xenova/*): "Xenova/whisper-tiny" (rápido),
 // "Xenova/whisper-base" (equilibrado) o "Xenova/whisper-small" (preciso).
