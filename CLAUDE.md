@@ -70,6 +70,8 @@ pnpm reset-memory     # Restore MEMORY.md to git state
   - `emit(type, data)`: Broadcasts v1 envelope `{ type, version, timestamp, data }` to all connected clients.
   - `setState(state)`: Dedup `mara:state` transitions (`idle`/`listening`/`thinking`/`speaking`/`seeing`/`error`/`offline`).
   - `emitMessage(text)`: `mara:message` with response text.
+  - `emitSpeakingStarted()` / `emitSpeakingFinished()`: `voice.speaking.started` / `voice.speaking.finished` around TTS generation (emitted by `generateVoice`); decoupled from Telegram.
+  - `emitVoiceAudio(text, wav)`: `voice.audio` with WAV in base64 so the UI can play Mara's reply back (browser-mic flow).
   - `emitConfirm(request)`: `mara:confirm` for approval flow.
   - Re-sync: sends current state, last message, and network status to each newly connected client.
 

@@ -202,7 +202,3 @@ export function getRegisteredToolNames(): string[] {
     .map((tool: any) => tool?.function?.name)
     .filter((name): name is string => typeof name === "string" && name.length > 0)
 }
-
-export function getMemoryMode(): "engram" | "fallback MEMORY.md" {
-  return hasMemoryServer ? "engram" : "fallback MEMORY.md"
-}

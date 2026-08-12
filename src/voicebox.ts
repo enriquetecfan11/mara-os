@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises"
 import { basename } from "node:path"
 import { voiceboxUrl, voiceboxProfile, voiceboxEnabled, voiceboxTranscribeModel } from "./config.js"
 import { debug, info, error as logError } from "./logger.js"
+import { emitSpeakingStarted, emitSpeakingFinished } from "./events.js"
 
 let cachedProfileId: string | null = null
 
@@ -118,7 +119,14 @@ export async function transcribeAudio(filePath: string): Promise<string> {
   return text
 }
 
-export async function generateVoice(text: string): Promise<Buffer> {
+/**
+ * Sintetiza `text` y devuelve el WAV generado.
+ * Por defecto emite el ciclo de habla (voice.speaking.*); pasa `emitCycle` a
+ * false cuando el llamador quiere orquestar él mismo esos eventos (p. ej. para
+ * que la UI siga en "speaking" mientras reproduce el audio).
+ */
+export async function generateVoice(text: string, emitCycle: boolean = true): Promise<Buffer> {
+  if (emitCycle) emitSpeakingStarted()
   try {
     const profileId = await resolveProfileId()
 
@@ -174,5 +182,7 @@ export async function generateVoice(text: string): Promise<Buffer> {
   } catch (err) {
     logError("Voicebox", `generateVoice: ${err}`)
     throw err
+  } finally {
+    if (emitCycle) emitSpeakingFinished()
   }
 }

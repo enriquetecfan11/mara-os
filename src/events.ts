@@ -264,6 +264,31 @@ export function setState(state: MaraState): void {
   emit("mara:state", { state })
 }
 
+/**
+ * Ciclo de habla (TTS). Eventos dedicados emitidos alrededor de la síntesis
+ * de voz, desacoplados de Telegram: cualquier canal de salida que genere voz
+ * los dispara. Actualizan lastState para que la sincronización de nuevos
+ * clientes (mara:state) refleje el estado correcto mientras se habla.
+ */
+export function emitSpeakingStarted(): void {
+  lastState = "speaking"
+  emit("voice.speaking.started", {})
+}
+
+export function emitSpeakingFinished(): void {
+  lastState = "idle"
+  emit("voice.speaking.finished", {})
+}
+
+/**
+ * Reproducción de voz hacia la UI (respuesta para el micrófono del navegador).
+ * Envía el WAV en base64 dentro de un evento JSON para que viaje limpio por el
+ * bridge y la UI lo repita con su propia salida de audio.
+ */
+export function emitVoiceAudio(text: string, audio: Buffer): void {
+  emit("voice.audio", { text, audio: audio.toString("base64") })
+}
+
 /** Emite la respuesta actual de Mara como mara:message. */
 export function emitMessage(text: string): void {
   lastMessage = text

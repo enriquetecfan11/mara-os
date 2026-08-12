@@ -5,15 +5,17 @@ import { join } from "node:path"
 import { approvalMessage, hasApproval, needsApproval } from "./approvals.js"
 import { saveTelegramPhoto, saveTelegramFile } from "./telegram-files.js"
 import { telegramToken, telegramChatId, uploadsDir, ollamaUrl, ollamaModel, agentDir, timezone, voiceboxEnabled, telegramSendVoiceDefault, sttLocalEnabled, maraUserName } from "./config.js"
-import { initMcpClients, closeMcpClients, callServerTool, getConnectedMcpServerNames, getRegisteredToolNames, getMemoryMode } from "./mcp.js"
-import { askPiWithRetry, clearChatHistory, cancelRequest, getChatHistoryMessageCount } from "./ollama.js"
+import { initMcpClients, closeMcpClients, callServerTool, getConnectedMcpServerNames, getRegisteredToolNames } from "./mcp.js"
+import { askPiWithRetry, clearChatHistory, cancelRequest } from "./ollama.js"
+import { getMemoryManager } from "./memory/index.js"
+import { runMemoryMigration } from "./memory/migrate.js"
 import { getSkillList, loadSkillsContext, reloadSkills } from "./skills.js"
 import { readContextFile } from "./cache.js"
 import { info, error as logError, warn } from "./logger.js"
 import { generateVoice, transcribeAudio, checkVoicebox } from "./voicebox.js"
 import { transcribeLocal } from "./stt.js"
 import { wavToOggOpus } from "./audio.js"
-import { startUiEvents, closeUiEvents, setState, emitMessage, emitConfirm, emitError, setCommandHandler, setAudioHandler, type UiCommand } from "./events.js"
+import { startUiEvents, closeUiEvents, setState, emitMessage, emitConfirm, emitError, emitSpeakingStarted, emitSpeakingFinished, emitVoiceAudio, setCommandHandler, setAudioHandler, type UiCommand } from "./events.js"
 
 function stripMarkdown(text: string): string {
   return text
@@ -113,9 +115,9 @@ function emitConfirmRequest(message: string, chatId: number): void {
 // No aplica si el texto es muy largo; si Voicebox o la transcodificación fallan, no rompe.
 async function trySendVoice(ctx: Context, text: string): Promise<boolean> {
   if (text.length > 500) return false
-  setState("speaking")
   const action = startAction(ctx.chat!.id, "record_voice")
   try {
+    // El ciclo de habla (voice.speaking.*) lo emiten generateVoice/finally.
     const wav = await generateVoice(text)
     try {
       const ogg = await wavToOggOpus(wav)
@@ -131,7 +133,6 @@ async function trySendVoice(ctx: Context, text: string): Promise<boolean> {
     return false
   } finally {
     stopAction(action)
-    setState("idle")
   }
 }
 
@@ -257,6 +258,8 @@ bot.command("help", async (ctx) => {
     "  /status \u2014 Ver estado del sistema",
     "  /cancel \u2014 Cancelar operacion en curso",
     "  /memory \u2014 Buscar recuerdos (ej: /memory que dije ayer)",
+    "  /memory search <texto> \u2014 Buscar en memoria",
+    "  /memory list \u2014 Listar todos los recuerdos",
     "  /memory forget <id> \u2014 Olvidar un recuerdo",
     "  /skill lista \u2014 Ver skills disponibles",
     "  /skill nombre \u2014 Cargar un skill especifico",
@@ -326,10 +329,13 @@ bot.command("context", async (ctx) => {
   }
 
   const skills = await getSkillList()
-  const historyCount = getChatHistoryMessageCount(ctx.chat.id)
   const connectedResources = getConnectedMcpServerNames()
   const tools = getRegisteredToolNames()
   const datetime = formatDateTimeWithOffset(new Date(), timezone)
+
+  const memoryManager = getMemoryManager()
+  const memoryBackend = memoryManager.getBackendType()
+  const longTermMemories = await memoryManager.list(1, 0)
 
   const lines = [
     "execution_context:",
@@ -340,7 +346,7 @@ bot.command("context", async (ctx) => {
     ...fileStates.map(file => `    ${file.name}: ${file.status}`),
     "",
     "  conversation:",
-    `    messages: ${historyCount}`,
+    `    backend: persistent (SQLite/Engram)`,
     "",
     "  skills:",
     ...(skills.length > 0 ? skills.map(skill => `    - ${skill}`) : ["    - none"]),
@@ -353,11 +359,13 @@ bot.command("context", async (ctx) => {
     "",
     "  sources_used_in_current_request:",
     "    - local_context",
+    "    - conversation_history",
+    "    - long_term_memory",
     "",
     "  memory:",
-    `    status: ${memoryStatus}`,
-    `    mode: ${getMemoryMode()}`,
-    `    entries: ${memoryEntries}`,
+    `    backend: ${memoryBackend}`,
+    `    long_term_entries: ${longTermMemories.length}`,
+    `    legacy_memory_md: ${memoryStatus} (${memoryEntries} lines)`,
   ]
 
   await ctx.reply(lines.join("\n"))
@@ -405,17 +413,52 @@ bot.command("cancel", async (ctx) => {
 bot.command("memory", async (ctx) => {
   const text = ctx.message?.text ?? ""
   const args = text.split(" ").slice(1)
-  const query = args.join(" ")
+  const subcommand = args[0]?.toLowerCase()
+  const query = args.slice(1).join(" ")
 
   const typing = startTyping(ctx.chat.id)
+  const memoryManager = getMemoryManager()
   try {
-    if (query.startsWith("forget ")) {
-      const id = query.slice(7).trim()
-      const result = await callServerTool("engram", "forget", { id })
-      await ctx.reply(stripMarkdown(result || "Olvidado."))
+    if (subcommand === "forget") {
+      const id = query.trim()
+      if (!id) {
+        await ctx.reply("Uso: /memory forget <id>")
+        return
+      }
+      const success = await memoryManager.forget(id)
+      await ctx.reply(success ? "Recuerdo eliminado." : "No se encontró el recuerdo.")
+    } else if (subcommand === "search" || subcommand === "find") {
+      const searchQuery = query || "recuerdos recientes"
+      const result = await memoryManager.search({ query: searchQuery, limit: 10 })
+      if (result.entries.length === 0) {
+        await ctx.reply("No hay recuerdos que coincidan.")
+        return
+      }
+      const lines = result.entries.map(
+        (e) => `- ${e.id}: [${e.type}] ${e.content} (importancia: ${e.importance.toFixed(1)})`
+      )
+      await ctx.reply(lines.join("\n"))
+    } else if (subcommand === "list") {
+      const entries = await memoryManager.list(20, 0)
+      if (entries.length === 0) {
+        await ctx.reply("No hay recuerdos almacenados.")
+        return
+      }
+      const lines = entries.map(
+        (e) => `- ${e.id}: [${e.type}] ${e.content} (importancia: ${e.importance.toFixed(1)})`
+      )
+      await ctx.reply(lines.join("\n"))
     } else {
-      const result = await callServerTool("engram", "recall", { query: query || "recuerdos recientes" })
-      await ctx.reply(stripMarkdown(result || "No tengo recuerdos sobre eso."))
+      const searchQuery = subcommand ? `${subcommand} ${query}`.trim() : "recuerdos recientes"
+      const result = await memoryManager.search({ query: searchQuery, limit: 5 })
+      if (result.entries.length === 0) {
+        await ctx.reply("No tengo recuerdos sobre eso.")
+        return
+      }
+      const lines = result.entries.map(
+        (e) => `- [${e.type}] ${e.content} (importancia: ${e.importance.toFixed(1)})`
+      )
+      await ctx.reply(lines.join("\n"))
     }
   } catch (err: any) {
     await ctx.reply(`Error al consultar memoria: ${err.message}`)
@@ -680,7 +723,8 @@ async function handleBrowserAudio(wav: Buffer): Promise<void> {
       await writeFile(audioPath, wav)
       const durSec = wav.length / 32000
       info("Telegram", `[mic] clip: ${wav.length} bytes (${durSec.toFixed(2)}s), ruta=${audioPath}`)
-      setState("listening")
+      // Procesando: pasamos a thinking (no a listening, que rearmaría el mic del navegador y causaría bucle).
+      setState("thinking")
       try {
         transcript = sttLocalEnabled
           ? await transcribeLocal(audioPath)
@@ -718,6 +762,21 @@ async function handleBrowserAudio(wav: Buffer): Promise<void> {
       } else {
         warn("Telegram", "[mic] TELEGRAM_CHAT_ID no configurado: no se envió la transcripción/respuesta a Telegram")
       }
+      // Respuesta de voz para la propia UI: generamos el TTS y se lo mandamos
+      // para que lo reproduzca en el dispositivo. Orquestamos el ciclo de habla
+      // aquí para que la UI siga en "speaking" mientras reproduce el audio.
+      if (voiceboxEnabled) {
+        try {
+          emitSpeakingStarted()
+          const wav = await generateVoice(stripped, false)
+          emitVoiceAudio(stripped, wav)
+          emitSpeakingFinished()
+          info("Telegram", `[mic] Voz generada para la UI (${wav.length} bytes)`)
+        } catch (err) {
+          logError("Bot", `[mic] TTS para la UI falló: ${err}`)
+          emitSpeakingFinished()
+        }
+      }
       setState("idle")
       info("Telegram", `[mic] Replied to browser audio (audio)`)
     } catch (err: any) {
@@ -739,6 +798,8 @@ function registerAudioHandler(): void {
 async function gracefulShutdown(signal: string) {
   info("Bot", `Received ${signal}, shutting down gracefully...`)
   await closeMcpClients()
+  const memoryManager = getMemoryManager()
+  await memoryManager.close()
   closeUiEvents()
   bot.stop()
   info("Bot", "Bot stopped.")
@@ -753,6 +814,7 @@ async function start() {
   registerCommandHandler()
   registerAudioHandler()
   await initMcpClients()
+  await runMemoryMigration()
   info("Bot", `Telegram token present: ${telegramToken ? "yes" : "no"}`)
   info("Bot", `Ollama endpoint: ${ollamaUrl}`)
   await checkOllama()

@@ -11,7 +11,7 @@ import { info, error as logError, warn } from "./logger.js"
 import { generateVoice, transcribeAudio } from "./voicebox.js"
 import { transcribeLocal } from "./stt.js"
 import { wavToOggOpus } from "./audio.js"
-import { startUiEvents, closeUiEvents, setState, emitMessage, emitConfirm, emitError, setCommandHandler, setAudioHandler, type UiCommand, type ConfirmRequest } from "./events.js"
+import { startUiEvents, closeUiEvents, setState, emitMessage, emitConfirm, emitError, emitSpeakingStarted, emitSpeakingFinished, emitVoiceAudio, setCommandHandler, setAudioHandler, type UiCommand, type ConfirmRequest } from "./events.js"
 
 const pendingConfirms = new Map<string, { chatId: number; message: string }>()
 
@@ -48,8 +48,8 @@ function emitConfirmRequest(message: string, chatId: number): void {
 
 async function trySendVoice(ctx: Context, text: string): Promise<boolean> {
   if (text.length > 500) return false
-  setState("speaking")
   try {
+    // El ciclo de habla (voice.speaking.*) lo emiten generateVoice/finally.
     const wav = await generateVoice(text)
     try {
       const ogg = await wavToOggOpus(wav)
@@ -61,8 +61,6 @@ async function trySendVoice(ctx: Context, text: string): Promise<boolean> {
   } catch (err) {
     logError("Bot", `Failed to send voice: ${err}`)
     return false
-  } finally {
-    setState("idle")
   }
 }
 
@@ -350,7 +348,8 @@ async function handleBrowserAudio(wav: Buffer): Promise<void> {
       // 16000 Hz mono PCM16 → bytes/2/16000 = segundos
       const durSec = wav.length / 32000
       info("Telegram", `[mic] clip: ${wav.length} bytes (${durSec.toFixed(2)}s), ruta=${audioPath}`)
-      setState("listening")
+      // Procesando: pasamos a thinking (no a listening, que rearmaría el mic del navegador y causaría bucle).
+      setState("thinking")
       try {
         transcript = sttLocalEnabled
           ? await transcribeLocal(audioPath)
@@ -387,6 +386,21 @@ async function handleBrowserAudio(wav: Buffer): Promise<void> {
         info("Telegram", `[mic] Enviado a Telegram (chat ${chatId})`)
       } else {
         warn("Telegram", "[mic] TELEGRAM_CHAT_ID no configurado: no se envió la transcripción/respuesta a Telegram")
+      }
+      // Respuesta de voz para la propia UI: generamos el TTS y se lo mandamos
+      // para que lo reproduzca en el dispositivo. Orquestamos el ciclo de habla
+      // aquí para que la UI siga en "speaking" mientras reproduce el audio.
+      if (voiceboxEnabled) {
+        try {
+          emitSpeakingStarted()
+          const wav = await generateVoice(stripped, false)
+          emitVoiceAudio(stripped, wav)
+          emitSpeakingFinished()
+          info("Telegram", `[mic] Voz generada para la UI (${wav.length} bytes)`)
+        } catch (err) {
+          logError("Bot", `[mic] TTS para la UI falló: ${err}`)
+          emitSpeakingFinished()
+        }
       }
       setState("idle")
       info("Telegram", `[mic] Replied to browser audio (audio)`)

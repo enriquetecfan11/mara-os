@@ -120,8 +120,15 @@ mara-ui (React) ──WS──▶ bridge (server/index.mjs) ──WS (MARA_BRAIN
 |---|---|---|
 | `mara:state` | `{ state }` (`idle`/`listening`/`thinking`/`speaking`/`seeing`/`error`/`offline`) | Transiciones del agente: `thinking` al procesar, `idle` al terminar, `listening` al transcribir audio, `seeing` al procesar una foto, `speaking` durante TTS, `error`/`offline` en fallos |
 | `mara:message` | `{ text }` | Respuesta actual generada |
+| `voice.speaking.started` | `{}` | Empieza la síntesis de voz (TTS) |
+| `voice.speaking.finished` | `{}` | Termina la síntesis de voz (TTS) |
+| `voice.audio` | `{ text, audio }` (`audio` = WAV en base64) | Voz generada para que la UI la reproduzca (respuesta al micrófono del navegador) |
 | `mara:network` | `{ connected }` | Estado del transporte (emitido en arranque/conexión) |
 | `mara:confirm` | `{ id, title, message, action }` | Cuando un mensaje requiere aprobación (además del aviso de Telegram) |
+
+> El ciclo de habla (`voice.speaking.*`) envuelve **la generación TTS**, no el envío
+> a un canal concreto: la UI pasa a `speaking`/`idle` según la síntesis de voz y
+> Telegram es solo un canal de salida más, no controla el estado visual.
 
 Al conectar (o reconectar) un cliente, el brain reenvía el estado actual, el último mensaje y el estado de red para que la UI se sincronice.
 
