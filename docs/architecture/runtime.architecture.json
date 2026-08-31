@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Mara OS Runtime Architecture",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    { "id": "tg", "type": "external", "label": "Telegram", "pos": [40, 300], "size": [120, 60] },
+    { "id": "b", "type": "backend", "label": "Bot", "pos": [220, 300], "size": [120, 60] },
+    { "id": "a", "type": "security", "label": "Approval", "pos": [220, 150], "size": [120, 60] },
+    { "id": "s", "type": "backend", "label": "STT", "pos": [40, 50], "size": [120, 60] },
+    { "id": "c", "type": "backend", "label": "Context", "pos": [400, 300], "size": [120, 60] },
+    { "id": "o", "type": "backend", "label": "Ollama", "pos": [580, 300], "size": [120, 60] },
+    { "id": "m", "type": "messagebus", "label": "MCP", "pos": [760, 300], "size": [120, 60] }
+  ],
+  "connections": [
+    { "from": "tg", "to": "b" },
+    { "from": "b", "to": "a" },
+    { "from": "tg", "to": "s", "variant": "dashed" },
+    { "from": "s", "to": "b" },
+    { "from": "b", "to": "c", "variant": "emphasis" },
+    { "from": "c", "to": "o", "variant": "emphasis" },
+    { "from": "o", "to": "m", "variant": "emphasis" },
+    { "from": "m", "to": "o" },
+    { "from": "o", "to": "b", "variant": "emphasis", "fromSide": "bottom", "toSide": "bottom" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "I/O Layer", "items": ["Telegram: messages, voice, files", "STT: whisper.cpp local transcription", "TTS: Voicebox remote voice generation"] },
+    { "dot": "emerald", "title": "Core Processing", "items": ["Bot: message orchestration & session management", "Approval: keyword-based security gates", "Context: assembles system prompt from config files"] },
+    { "dot": "violet", "title": "AI & Tool Execution", "items": ["Ollama: local LLM (ornith:9b) with tool-calling", "MCP: routes tool calls to external services", "Multi-step reasoning: tool results feed back to LLM"] },
+    { "dot": "amber", "title": "Persistence & Config", "items": ["Memory: per-chat conversation history", "Cache: mtime-based file caching (40ms → 1ms latency)", "Config: SOUL.md, USER.md, AGENTS.md, SYSTEM.md, skills/"] }
+  ]
+}
