@@ -4,7 +4,7 @@ import { appendFile, unlink, writeFile, mkdir } from "node:fs/promises"
 import { join } from "node:path"
 import { approvalMessage, hasApproval, needsApproval } from "./approvals.js"
 import { saveTelegramPhoto, saveTelegramFile } from "./telegram-files.js"
-import { telegramToken, telegramChatId, uploadsDir, ollamaUrl, ollamaModel, agentDir, timezone, voiceboxEnabled, telegramSendVoiceDefault, sttLocalEnabled, maraUserName } from "./config.js"
+import { telegramToken, telegramChatId, uploadsDir, ollamaUrl, ollamaModel, agentDir, timezone, voiceboxEnabled, telegramSendVoiceDefault, sttLocalEnabled, maraUserName, startupWelcome } from "./config.js"
 import { initMcpClients, closeMcpClients, callServerTool, getConnectedMcpServerNames, getRegisteredToolNames } from "./mcp.js"
 import { askPiWithRetry, clearChatHistory, cancelRequest } from "./ollama.js"
 import { getMemoryManager } from "./memory/index.js"
@@ -16,6 +16,7 @@ import { generateVoice, transcribeAudio, checkVoicebox } from "./voicebox.js"
 import { transcribeLocal } from "./stt.js"
 import { wavToOggOpus } from "./audio.js"
 import { startUiEvents, closeUiEvents, setState, emitMessage, emitConfirm, emitError, emitSpeakingStarted, emitSpeakingFinished, emitVoiceAudio, setCommandHandler, setAudioHandler, type UiCommand } from "./events.js"
+import { buildWelcomeText, sendWelcome } from "./welcome.js"
 
 function stripMarkdown(text: string): string {
   return text
@@ -206,12 +207,8 @@ bot.catch(async (err) => {
 
 bot.command("start", async (ctx) => {
   clearChatHistory(ctx.chat.id)
-  const name = ctx.from?.first_name || "there"
-  await ctx.reply(
-    `Hola ${name}! Soy Mara, tu asistente personal.\n\n` +
-    `Puedo ayudarte con tu calendario, notas, tareas y mas.\n` +
-    `Escribe /help para ver todo lo que puedo hacer.`
-  )
+  const welcome = await buildWelcomeText(ctx.from?.first_name || maraUserName)
+  await sendWelcome(ctx.chat.id, welcome, (id, text) => bot.api.sendMessage(id, text))
 })
 
 bot.command("reset", async (ctx) => {
@@ -220,59 +217,8 @@ bot.command("reset", async (ctx) => {
 })
 
 bot.command("help", async (ctx) => {
-  const skills = await getSkillList()
-  const skillList = skills.length > 0
-    ? skills.map(s => `  - ${s}`).join("\n")
-    : "  (ninguno)"
-
-  const fileNames = ["SOUL.md", "USER.md", "AGENTS.md", "MEMORY.md"]
-  const fileStats: string[] = []
-  for (const name of fileNames) {
-    try {
-      const content = await readContextFile(agentDir, name)
-      fileStats.push(`  ${name}: ${content.length} chars`)
-    } catch {
-      fileStats.push(`  ${name}: (no existe)`)
-    }
-  }
-
-  const lines = [
-    "Mara OS \u2014 Asistente personal de Kike",
-    "",
-    "Modelo:",
-    `  ${ollamaModel} (${ollamaUrl})`,
-    "",
-    "Contexto:",
-    ...fileStats,
-    "",
-    "Que puedo hacer:",
-    "  \u2022 Responder preguntas y mantener conversacion",
-    "  \u2022 Gestionar tu calendario (reuniones, citas, recordatorios)",
-    "  \u2022 Crear y administrar notas y tareas",
-    "  \u2022 Automatizar el Mac (abrir apps, ejecutar scripts)",
-    "  \u2022 Recordar datos importantes (memoria persistente)",
-    "  \u2022 Procesar fotos que me envies",
-    "",
-    "Comandos:",
-    "  /help \u2014 Mostrar esta ayuda",
-    "  /status \u2014 Ver estado del sistema",
-    "  /cancel \u2014 Cancelar operacion en curso",
-    "  /memory \u2014 Buscar recuerdos (ej: /memory que dije ayer)",
-    "  /memory search <texto> \u2014 Buscar en memoria",
-    "  /memory list \u2014 Listar todos los recuerdos",
-    "  /memory forget <id> \u2014 Olvidar un recuerdo",
-    "  /skill lista \u2014 Ver skills disponibles",
-    "  /skill nombre \u2014 Cargar un skill especifico",
-    "  /skill recargar \u2014 Recargar skills desde disco",
-    "  /context \u2014 Ver contexto de ejecucion actual",
-    "  /voz on | /voz off \u2014 Activar/desactivar salida de voz",
-    "  /feedback <texto> \u2014 Enviar opinion sobre el bot",
-    "",
-    `Skills (${skills.length}):`,
-    skillList,
-  ]
-
-  await ctx.reply(lines.join("\n"))
+  const welcome = await buildWelcomeText(ctx.from?.first_name || maraUserName)
+  await sendWelcome(ctx.chat.id, welcome, (id, text) => bot.api.sendMessage(id, text))
 })
 
 bot.command("status", async (ctx) => {
@@ -489,7 +435,11 @@ bot.command("voz", async (ctx) => {
     voiceOverrides.set(ctx.chat.id, false)
     await ctx.reply("Voz desactivada para este chat.")
   } else {
-    await ctx.reply("Usa: /voz on | /voz off")
+    const actual = wantVoiceFor(ctx.chat.id, false)
+    await ctx.reply(
+      `Salida de voz en este chat: ${actual ? "activada" : "desactivada"}.\n` +
+      `Usa: /voz on | /voz off`
+    )
   }
 })
 
@@ -824,10 +774,12 @@ async function start() {
   try {
     const me = await bot.api.getMe()
     info("Bot", `Bot @${me.username} is running successfully!`)
-    if (telegramChatId) {
-      const now = new Date().toLocaleString("es-ES", { timeZone: process.env.TIMEZONE || "Europe/Madrid", dateStyle: "full", timeStyle: "medium" })
-      await bot.api.sendMessage(telegramChatId, `🤖 Mara OS iniciado\n✅ Bot @${me.username} corriendo\n🕐 ${now}`)
-      info("Bot", `Startup message sent to chat ${telegramChatId}`)
+    if (telegramChatId && startupWelcome) {
+      const welcome = await buildWelcomeText(maraUserName, me.username)
+      const sent = await sendWelcome(Number(telegramChatId), welcome, (id, text) => bot.api.sendMessage(id, text))
+      info("Bot", `Startup message sent to chat ${telegramChatId} (${sent} mensaje(s))`)
+    } else if (!startupWelcome) {
+      info("Bot", "Startup welcome disabled (STARTUP_WELCOME=false)")
     }
   } catch (err) {
     logError("Bot", `Failed to start: ${err}`)

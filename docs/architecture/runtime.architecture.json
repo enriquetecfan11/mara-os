@@ -28,7 +28,7 @@
   "cards": [
     { "dot": "cyan", "title": "I/O Layer", "items": ["Telegram: messages, voice, files", "STT: whisper.cpp local transcription", "TTS: Voicebox remote voice generation"] },
     { "dot": "emerald", "title": "Core Processing", "items": ["Bot: message orchestration & session management", "Approval: keyword-based security gates", "Context: assembles system prompt from config files"] },
-    { "dot": "violet", "title": "AI & Tool Execution", "items": ["Ollama: local LLM (ornith:9b) with tool-calling", "MCP: routes tool calls to external services", "Multi-step reasoning: tool results feed back to LLM"] },
+    { "dot": "violet", "title": "AI & Tool Execution", "items": ["Ollama: local LLM (ornith-1.5:9b) with tool-calling", "MCP: routes tool calls to external services", "Multi-step reasoning: tool results feed back to LLM"] },
     { "dot": "amber", "title": "Persistence & Config", "items": ["Memory: per-chat conversation history", "Cache: mtime-based file caching (40ms → 1ms latency)", "Config: SOUL.md, USER.md, AGENTS.md, SYSTEM.md, skills/"] }
   ]
 }

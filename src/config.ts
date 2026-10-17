@@ -19,8 +19,8 @@ export const agentDir = join(process.cwd(), "config")
 export const skillsDir = join(agentDir, "skills")
 export const uploadsDir = join(agentDir, "uploads")
 export const memoryPath = join(agentDir, "MEMORY.md")
-export const ollamaUrl = process.env.OLLAMA_URL || "http://localhost:11434"
-export const ollamaModel = process.env.OLLAMA_MODEL || "ornith:9b"
+export const ollamaUrl = process.env.OLLAMA_URL || "http://192.168.1.182:11434"
+export const ollamaModel = process.env.OLLAMA_MODEL || "ornith-1.5:9b"
 export const timezone = process.env.TIMEZONE || "Europe/Madrid"
 // URL del servidor WebSocket "brain" para emitir eventos v1 hacia Mara UI.
 // El bridge de mara-ui se conecta a esta misma URL (MARA_BRAIN_WS_URL).
@@ -41,3 +41,9 @@ export const sttLocalEnabled = process.env.STT_LOCAL_ENABLED !== "false"
 export const sttModel = process.env.STT_MODEL || "Xenova/whisper-tiny"
 // Idioma del audio entrante (código ISO, ej. "es"). "auto" para autodetección.
 export const sttLanguage = process.env.STT_LANGUAGE || "es"
+// Mensaje de bienvenida largo al arrancar. Ponlo a "false" para silenciarlo
+// (el comando /start y /help siguen mostrándolo bajo demanda).
+export const startupWelcome = process.env.STARTUP_WELCOME !== "false"
+// Tiempo máximo de una transcripción local (ms). Evita que un STT atascado
+// bloquee la cola de mensajes del chat. Por defecto 60 s.
+export const sttTimeoutMs = Number(process.env.STT_TIMEOUT_MS || 60000)

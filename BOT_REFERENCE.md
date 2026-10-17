@@ -32,7 +32,7 @@ Asistente personal vía Telegram + Ollama local + MCP.
 ## Stack
 
 **Bot:** grammy (TypeScript)  
-**LLM:** Ollama (modelo: `gemma4:e2b`, url configurable)  
+**LLM:** Ollama (modelo: `ornith-1.5:9b`, url configurable)  
 **MCP:** 4 servidores — engram (memoria), macos_automator, calendar (n8n), notes (n8n) = 27 tools  
 **Memoria:** Engram (SQLite local, zero LLM). Si no disponible, fallback a `MEMORY.md`  
 **Contexto:** 5 archivos markdown cacheados por mtime

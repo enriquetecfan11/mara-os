@@ -4,8 +4,8 @@
 
 | Comando | Descripción | Implementación |
 |---|---|---|
-| `/start` | Inicia la conversación, limpia el historial y saluda | `bot.ts:63` |
-| `/help` | Muestra ayuda completa con modelo, contexto y skills | `bot.ts:78` |
+| `/start` | Limpia el historial y muestra el mensaje de bienvenida completo (estado del sistema + estados + comandos) | `bot.ts:208` |
+| `/help` | Muestra el mismo mensaje de bienvenida completo | `bot.ts:219` |
 | `/status` | Muestra estado del sistema (fecha, modelo, archivos de contexto, skills) | `bot.ts:130` |
 | `/context` | Muestra un resumen estructurado del contexto de ejecución actual | `bot.ts:223` |
 | `/reset` | Limpia el historial de conversación del chat actual | `bot.ts:73` |
@@ -22,6 +22,8 @@
 | Comando | Descripción |
 |---|---|
 | `pnpm bot` | Iniciar el bot |
+| `pnpm bot:lite` | Iniciar el bot en variante ligera |
+| `pnpm check:ollama` | Comprobar conectividad, modelo y tool calling de Ollama |
 | `pnpm typecheck` | Verificar tipos TypeScript |
 | `pnpm reset-bot` | Vaciar MEMORY.md |
 | `pnpm reset-memory` | Restaurar MEMORY.md de git |

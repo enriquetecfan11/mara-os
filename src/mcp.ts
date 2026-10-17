@@ -14,6 +14,10 @@ export const memoryServerNames = new Set(["engram"])
 export let hasMemoryServer = false
 export let ollamaTools: Array<any> = []
 
+// Estado del último intento de conexión, para diagnósticos (mensaje de arranque).
+let configuredServers: string[] = []
+const failedServers = new Set<string>()
+
 function buildTransport(server: McpServerConfig) {
   const serverType = server.type ?? "http"
 
@@ -106,15 +110,20 @@ export async function initMcpClients() {
     info("MCP", `Loading config from ${mcpConfigPath}`)
     info("MCP", `Servers configured: ${mcpConfig.servers.map((server) => `${server.name}:${server.type ?? "http"}`).join(", ")}`)
 
+    const servers = mcpConfig.servers
+    configuredServers = servers.map((server) => server.name)
+    failedServers.clear()
+
     const results = await Promise.allSettled(
-      mcpConfig.servers.map(server => connectServer(server))
+      servers.map(server => connectServer(server))
     )
 
-    for (const r of results) {
+    results.forEach((r, index) => {
       if (r.status === "rejected") {
-        logError("MCP", `Failed to connect: ${r.reason}`)
+        failedServers.add(servers[index].name)
+        logError("MCP", `Failed to connect to "${servers[index].name}": ${r.reason}`)
       }
-    }
+    })
 
     info("MCP", `Loaded ${clientsMap.size} client(s) and ${ollamaTools.length} tool(s) for Ollama`)
     if (!hasMemoryServer) {
@@ -201,4 +210,36 @@ export function getRegisteredToolNames(): string[] {
   return ollamaTools
     .map((tool: any) => tool?.function?.name)
     .filter((name): name is string => typeof name === "string" && name.length > 0)
+}
+
+export interface McpStatus {
+  /** Servidores declarados en mcp.json. */
+  configured: string[]
+  /** Servidores conectados. */
+  connected: string[]
+  /** Servidores que fallaron al conectar. */
+  failed: string[]
+  /** Número de tools registradas por servidor conectado. */
+  toolsByServer: Record<string, number>
+}
+
+/** Resumen del estado MCP tras `initMcpClients()`, para diagnósticos. */
+export function getMcpStatus(): McpStatus {
+  const nameByClient = new Map<Client, string>()
+  for (const [name, client] of clientsMap) {
+    nameByClient.set(client, name)
+  }
+
+  const toolsByServer: Record<string, number> = {}
+  for (const [, client] of toolToClientMap) {
+    const name = nameByClient.get(client)
+    if (name) toolsByServer[name] = (toolsByServer[name] ?? 0) + 1
+  }
+
+  return {
+    configured: [...configuredServers],
+    connected: [...clientsMap.keys()],
+    failed: [...failedServers],
+    toolsByServer,
+  }
 }

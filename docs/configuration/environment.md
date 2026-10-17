@@ -13,10 +13,11 @@ El bot se configura mediante variables de entorno en un archivo `.env` (gitignor
 | Variable | Descripción | Default |
 |---|---|---|
 | `TELEGRAM_CHAT_ID` | Chat ID para notificaciones de inicio | — |
-| `OLLAMA_URL` | URL del servidor Ollama | `http://localhost:11434` |
-| `OLLAMA_MODEL` | Modelo de Ollama a usar | `ornith:9b` |
+| `OLLAMA_URL` | URL del servidor Ollama | `http://192.168.1.182:11434` |
+| `OLLAMA_MODEL` | Modelo de Ollama a usar | `ornith-1.5:9b` |
 | `TIMEZONE` | Zona horaria para fechas | `Europe/Madrid` |
 | `LOG_LEVEL` | Nivel de logging (`debug`, `info`, `warn`, `error`) | `info` |
+| `STARTUP_WELCOME` | Envía el mensaje de bienvenida largo (estado + comandos) al arrancar. `false` lo silencia | `true` |
 
 ## Voz de salida (Voicebox TTS)
 
@@ -33,9 +34,10 @@ El bot se configura mediante variables de entorno en un archivo `.env` (gitignor
 
 | Variable | Descripción | Default |
 |---|---|---|
-| `STT_LOCAL_ENABLED` | Transcribe local con Whisper (whisper.cpp, Apple Silicon). `false` usa Voicebox como STT | `true` |
-| `STT_MODEL` | Modelo whisper.cpp: `large-v3-turbo` (recomendado, Apple Silicon) o `small` (ligero) | `large-v3-turbo` |
+| `STT_LOCAL_ENABLED` | Transcribe local con Whisper (transformers.js / ONNX, sin compilar). `false` usa Voicebox como STT | `true` |
+| `STT_MODEL` | Modelo whisper de transformers.js: `Xenova/whisper-tiny` (rápido), `Xenova/whisper-base` (equilibrado) o `Xenova/whisper-small` (preciso) | `Xenova/whisper-tiny` |
 | `STT_LANGUAGE` | Idioma del audio entrante (ISO, ej. `es`). `auto` para autodetección | `es` |
+| `STT_TIMEOUT_MS` | Tiempo máximo de una transcripción local (ms). Evita que un STT atascado bloquee la cola de mensajes | `60000` |
 | `VOICEBOX_TRANSCRIBE_MODEL` | Modelo de transcripción de Voicebox (solo si `STT_LOCAL_ENABLED=false`) | `whisper-turbo` |
 
 Ver detalle en [STT local (Whisper)](../STT_LOCAL.md).
@@ -57,9 +59,12 @@ Eventos emitidos: `mara:state` (`idle`/`listening`/`thinking`/`speaking`/`seeing
 ```env
 TELEGRAM_TOKEN=tu_token_de_telegram
 TELEGRAM_CHAT_ID=123456789
-OLLAMA_URL=http://localhost:11434
-OLLAMA_MODEL=ornith:9b
+OLLAMA_URL=http://192.168.1.182:11434
+OLLAMA_MODEL=ornith-1.5:9b
 TIMEZONE=Europe/Madrid
+
+# Mensaje de bienvenida largo al arrancar (false para silenciarlo)
+# STARTUP_WELCOME=true
 
 # Voz de salida (Voicebox TTS)
 VOICEBOX_URL=http://192.168.1.79:17493
@@ -67,9 +72,9 @@ VOICEBOX_ENABLED=true
 VOICEBOX_PROFILE=Mara
 TELEGRAM_SEND_VOICE=true
 
-# Voz de entrada (STT local con Whisper en Apple Silicon)
+# Voz de entrada (STT local con Whisper vía transformers.js)
 STT_LOCAL_ENABLED=true
-STT_MODEL=large-v3-turbo
+STT_MODEL=Xenova/whisper-tiny
 STT_LANGUAGE=es
 
 # Integración con Mara UI (protocolo de eventos v1). Vacío = desactivado.
@@ -87,5 +92,5 @@ cp .env.example .env
 ## Notas
 
 - `TELEGRAM_TOKEN` es obligatorio para que el bot funcione.
-- El modelo de Ollama debe soportar tool calling. Modelo recomendado: `ornith:9b`.
+- El modelo de Ollama debe soportar tool calling. Modelo recomendado: `ornith-1.5:9b`.
 - `LOG_LEVEL=debug` es útil para depuración de tool_calls y diagnóstico.

@@ -12,6 +12,23 @@ function normalizeContent(content: string): string {
   return content.trim().toLowerCase().replace(/\s+/g, " ")
 }
 
+/**
+ * Convierte el texto libre del usuario en una consulta FTS5 segura.
+ *
+ * FTS5 interpreta caracteres como ? * + - ( ) " y palabras como AND/OR/NOT/NEAR
+ * como sintaxis propia, así que usar el mensaje crudo revienta con
+ * "fts5: syntax error near ..." (y eso abortaba el mensaje entero).
+ *
+ * Extraemos los tokens (letras, números y _) y los entrecomillamos unidos por
+ * OR: semántica de "cualquiera de estas palabras". Devuelve null si no queda
+ * ningún token con el que buscar.
+ */
+function sanitizeFtsQuery(query: string): string | null {
+  const tokens = query.toLowerCase().match(/[\p{L}\p{N}_]+/gu)
+  if (!tokens || tokens.length === 0) return null
+  return tokens.map((token) => `"${token}"`).join(" OR ")
+}
+
 const MEMORY_TYPES: MemoryType[] = [
   "preference",
   "personal_fact",
@@ -73,7 +90,7 @@ export class SqliteMemoryStore implements MemoryStore {
   }
 
   async initialize(): Promise<void> {
-    this.setupDatabase()
+    // El constructor ya creó el esquema; aquí solo reconstruimos el índice FTS.
     await this.rebuildFts()
   }
 
@@ -147,12 +164,18 @@ export class SqliteMemoryStore implements MemoryStore {
   async search(options: SearchOptions): Promise<SearchResult> {
     const { query, limit = 5, types, minImportance = 0 } = options
 
+    const ftsQuery = sanitizeFtsQuery(query)
+    if (!ftsQuery) {
+      debug("MemoryStore", `Search "${query}" skipped: sin tokens con los que buscar`)
+      return { entries: [], query }
+    }
+
     let sql = `
       SELECT m.* FROM memories m
       JOIN memories_fts f ON m.rowid = f.rowid
       WHERE memories_fts MATCH ? AND m.importance >= ?
     `
-    const params: unknown[] = [query, minImportance]
+    const params: unknown[] = [ftsQuery, minImportance]
 
     if (types && types.length > 0) {
       sql += ` AND m.type IN (${types.map(() => "?").join(",")})`
@@ -162,8 +185,16 @@ export class SqliteMemoryStore implements MemoryStore {
     sql += ` ORDER BY m.importance DESC, m.last_accessed DESC LIMIT ?`
     params.push(limit)
 
-    const stmt = this.db.prepare(sql)
-    const rows = stmt.all(...params) as any[]
+    let rows: any[]
+    try {
+      const stmt = this.db.prepare(sql)
+      rows = stmt.all(...params) as any[]
+    } catch (err) {
+      // Red de seguridad: una consulta FTS5 problemática nunca debe tumbar el
+      // mensaje del usuario. Devolvemos "sin recuerdos" y seguimos.
+      warn("MemoryStore", `Search "${query}" failed (${err}); devolviendo 0 memorias`)
+      return { entries: [], query }
+    }
 
     const entries = rows.map((row) => this.rowToEntry(row))
     for (const entry of entries) {

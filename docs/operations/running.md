@@ -22,6 +22,16 @@ cp .env.example .env
 # Editar .env con TELEGRAM_TOKEN, OLLAMA_URL, OLLAMA_MODEL, TIMEZONE
 ```
 
+## Verificar Ollama
+
+Antes de arrancar el bot, comprueba que el backend de inferencia responde (conectividad, modelo y tool calling):
+
+```bash
+pnpm check:ollama
+```
+
+Si todo va bien termina con `OK — Ollama está listo para Mara OS` (código de salida 0). Ver [Testing](../development/testing.md).
+
 ## Iniciar el Bot
 
 ```bash

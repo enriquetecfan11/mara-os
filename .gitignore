@@ -5,6 +5,10 @@ dist/
 *.log
 config/uploads/
 
+# Base de datos local de Mara (se crea sola en runtime; no versionar)
+data/*.db
+data/*.db-*
+
 .gitignore
 .claude
 .codegraph/

@@ -21,7 +21,7 @@ LOG_LEVEL=debug pnpm bot
 
 ```
 [14:32:55] [INFO] [Bot] Starting Telegram bot...
-[14:32:55] [DEBUG] [Ollama] Sending request to http://localhost:11434/api/chat...
+[14:32:55] [DEBUG] [Ollama] Sending request to http://192.168.1.182:11434/api/chat...
 [14:32:55] [INFO] [Skills] Detected: calendario, notas
 ```
 
@@ -48,7 +48,7 @@ Si el modelo responde con texto en lugar de tool_calls:
 
 1. Asegúrate de que `SYSTEM.md` empieza con "Responde SIEMPRE en español, NUNCA en inglés"
 2. Asegúrate de que `temperature: 0.3` y `tool_choice: "required"` están configurados en `ollama.ts`
-3. El modelo puede no ser fiable para tool calling. Prueba con `gemma4:e2b` o `ornith:9b`.
+3. El modelo puede no ser fiable para tool calling. Prueba con `gemma4:e2b` o `ornith-1.5:9b`.
 
 ### Verificar Conexión MCP
 
@@ -64,7 +64,7 @@ Busca en los logs:
 ### Ollama no responde
 
 ```
-[Ollama] Ping FAILED — Ollama no responde en http://localhost:11434
+[Ollama] Ping FAILED — Ollama no responde en http://192.168.1.182:11434
 ```
 
 Solución: Asegúrate de que Ollama está corriendo (`ollama serve`).

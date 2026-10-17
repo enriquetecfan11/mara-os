@@ -13,8 +13,8 @@ agentDir: string            // path a config/
 skillsDir: string           // path a config/skills/
 uploadsDir: string          // path a config/uploads/
 memoryPath: string          // path a config/MEMORY.md
-ollamaUrl: string           // OLLAMA_URL (default: http://localhost:11434)
-ollamaModel: string         // OLLAMA_MODEL (default: gemma4:e2b)
+ollamaUrl: string           // OLLAMA_URL (default: http://192.168.1.182:11434)
+ollamaModel: string         // OLLAMA_MODEL (default: ornith-1.5:9b)
 timezone: string            // TIMEZONE (default: Europe/Madrid)
 brainWsUrl: string          // MARA_BRAIN_WS_URL (default: "", vacío = desactivado)
 

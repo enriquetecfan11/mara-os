@@ -1,6 +1,7 @@
 import { pipeline, type AutomaticSpeechRecognitionPipeline } from "@xenova/transformers"
 import { readFile } from "node:fs/promises"
-import { sttModel, sttLanguage } from "./config.js"
+import { sttModel, sttLanguage, sttTimeoutMs } from "./config.js"
+import { transcodeToWavPcm } from "./audio.js"
 import { debug, info, error as logError } from "./logger.js"
 
 // STT en Windows vía transformers.js (whisper en WebAssembly/ONNX).
@@ -45,6 +46,15 @@ function wavToFloat32(data: Buffer): Float32Array {
   }
   if (dataOffset < 0) throw new Error("Chunk 'data' no encontrado")
 
+  // ffmpeg, al escribir WAV por un pipe (no buscable), no puede reescribir el
+  // tamaño real del chunk 'data' y lo deja en 0xFFFFFFFF. Si nos fiáramos de él
+  // reservaríamos ~2.147M muestras (~8 GB de Float32Array) y el proceso se queda
+  // sin memoria (parece un cuelgue). Lo acotamos a los bytes que hay de verdad.
+  const available = data.length - dataOffset
+  if (dataSize <= 0 || dataSize > available) {
+    dataSize = available
+  }
+
   const sampleCount = Math.floor(dataSize / (bitsPerSample / 8)) / channels
   const out = new Float32Array(Math.floor(sampleCount))
   for (let s = 0; s < out.length; s++) {
@@ -58,19 +68,40 @@ function wavToFloat32(data: Buffer): Float32Array {
   return out
 }
 
+function isWavPcm(data: Buffer): boolean {
+  return data.length >= 12 && data.toString("ascii", 0, 4) === "RIFF" && data.toString("ascii", 8, 12) === "WAVE"
+}
+
+/** Ejecuta una promesa con límite de tiempo; limpia el timer para no dejar el proceso vivo. */
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: NodeJS.Timeout
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms)
+  })
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer!))
+}
+
 export async function transcribeLocal(filePath: string): Promise<string> {
-  const buffer = await readFile(filePath)
+  const raw = await readFile(filePath)
+  // Telegram entrega las notas de voz en OGG/Opus (y los ficheros de audio en
+  // MP3), pero whisper de transformers.js solo acepta PCM. Transcodificamos a
+  // WAV 16 kHz mono con ffmpeg cuando la entrada no es ya WAV.
+  const wav = isWavPcm(raw) ? raw : await transcodeToWavPcm(raw)
   debug("STT", `transformers.js transcribe (model=${sttModel}) ${filePath}`)
 
-  const audio = wavToFloat32(buffer)
+  const audio = wavToFloat32(wav)
   const pipe = await getTranscriber()
-  const result = (await pipe(audio, {
-    language: sttLanguage,
-    task: "transcribe",
-    chunk_length_s: 30,
-    stride_length_s: 5,
-    return_timestamps: false,
-  })) as { text?: string }
+  const result = (await withTimeout(
+    pipe(audio, {
+      language: sttLanguage,
+      task: "transcribe",
+      chunk_length_s: 30,
+      stride_length_s: 5,
+      return_timestamps: false,
+    }),
+    sttTimeoutMs,
+    `Transcripción local excedió ${Math.round(sttTimeoutMs / 1000)}s (ajusta STT_TIMEOUT_MS)`,
+  )) as { text?: string }
 
   const text = (result.text ?? "").trim()
   if (!text) throw new Error("Empty transcription")

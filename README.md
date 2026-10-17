@@ -38,8 +38,8 @@ El proyecto está diseñado para ser sencillo, legible y fácil de personalizar.
 3. Edita `.env` con tus credenciales y configuración:
    ```env
    TELEGRAM_TOKEN=tu_token_de_telegram
-   OLLAMA_URL=http://localhost:11434
-   OLLAMA_MODEL=ornith:9b
+   OLLAMA_URL=http://192.168.1.182:11434
+   OLLAMA_MODEL=ornith-1.5:9b
    TIMEZONE=Europe/Madrid
    VOICEBOX_URL=http://192.168.1.79:17493
    VOICEBOX_ENABLED=true
@@ -52,8 +52,8 @@ El proyecto está diseñado para ser sencillo, legible y fácil de personalizar.
 
 - **`TELEGRAM_TOKEN`**: Token del bot de Telegram (obligatorio).
 - **`TELEGRAM_CHAT_ID`**: ID del chat donde enviar mensajes de startup (opcional).
-- **`OLLAMA_URL`**: URL del servidor Ollama (default: `http://localhost:11434`).
-- **`OLLAMA_MODEL`**: Modelo a usar en Ollama (default: `ornith:9b`, con soporte de tool calling).
+- **`OLLAMA_URL`**: URL del servidor Ollama (default: `http://192.168.1.182:11434`).
+- **`OLLAMA_MODEL`**: Modelo a usar en Ollama (default: `ornith-1.5:9b`, con soporte de tool calling).
 - **`TIMEZONE`**: Zona horaria (default: `Europe/Madrid`).
 - **`VOICEBOX_URL`**: URL del servidor Voicebox para TTS (default: `http://192.168.1.79:17493`).
 - **`VOICEBOX_ENABLED`**: Habilita síntesis de voz (`true`/`false`, default: `false`).
@@ -74,10 +74,22 @@ El agente define su comportamiento mediante archivos Markdown ubicados en la car
 
 ## Ejecución
 
+Antes de arrancar, puedes comprobar que el backend de Ollama está operativo (conectividad, modelo presente, respuesta de texto y tool calling):
+
+```bash
+pnpm check:ollama
+```
+
 Para iniciar el bot en modo de desarrollo o ejecución normal:
 
 ```bash
 pnpm bot
+```
+
+Variante ligera, sin MCP ni UI:
+
+```bash
+pnpm bot:lite
 ```
 
 ## Integración con Mara UI

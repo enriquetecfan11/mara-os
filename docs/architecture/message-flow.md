@@ -32,7 +32,7 @@ bot.on("message:text", async (ctx) => { ... })
 ### 3. Envío a Ollama
 
 ```typescript
-fetch("http://localhost:11434/api/chat", {
+fetch("http://192.168.1.182:11434/api/chat", {
   body: JSON.stringify({
     model: ollamaModel,
     messages: [{ role: "system", content: systemPrompt }, ...history],

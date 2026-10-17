@@ -320,6 +320,11 @@ export function isUiEnabled(): boolean {
   return enabled
 }
 
+/** Número de clientes (Mara UI) conectados ahora mismo al brain. */
+export function getConnectedClientCount(): number {
+  return clients.size
+}
+
 /** Cierra el servidor WebSocket (usado en shutdown limpio). */
 export function closeUiEvents(): void {
   enabled = false

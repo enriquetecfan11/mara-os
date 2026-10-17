@@ -7,6 +7,20 @@ import { getMemoryManager, initializeMemory } from "./memory/index.js"
 import { buildContext } from "./memory/context-builder.js"
 import { extractAndStoreMemories } from "./memory/memory-extractor.js"
 
+/**
+ * Ping de salud a Ollama. Timeout corto y no lanza: devuelve false si no
+ * responde. Pensado para diagnósticos (mensaje de arranque, /help), no para el
+ * flujo de chat.
+ */
+export async function pingOllama(timeoutMs = 5000): Promise<boolean> {
+  try {
+    const res = await fetch(`${ollamaUrl}/api/version`, { signal: AbortSignal.timeout(timeoutMs) })
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
 interface ChatSession {
   lastUsed: number
 }
@@ -194,12 +208,24 @@ export async function askPi(chatId: number, message: string) {
   }
 }
 
+/**
+ * ¿Merece la pena reintentar? Los fallos transitorios (red, timeout) sí; los
+ * deterministas (p. ej. errores de SQLite) fallarán igual, así que no perdemos
+ * tiempo ni ensuciamos los logs reintentándolos.
+ */
+function isRetryable(err: any): boolean {
+  if (err?.name === "SqliteError") return false
+  if (typeof err?.code === "string" && err.code.startsWith("SQLITE_")) return false
+  return true
+}
+
 export async function askPiWithRetry(chatId: number, message: string, maxRetries = 2): Promise<string> {
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
       return await askPi(chatId, message)
     } catch (err: any) {
       if (err?.name === "AbortError") throw err
+      if (!isRetryable(err)) throw err
       if (attempt === maxRetries - 1) {
         throw err
       }
