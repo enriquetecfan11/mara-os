@@ -40,7 +40,7 @@ pnpm reset-memory     # Restore MEMORY.md to git state
   - Reduces per-request latency: 40-60ms (5 file reads) → 1ms (cache hits)
 
 - **bot.ts**: Telegram bot handler. Commands: `/start`, `/help`, `/status`, `/reset`, `/skill`. `/start` and `/help` render the shared long welcome message built in `welcome.ts` (live system status + states + command catalogue). Message handler orchestrates approval checks and calls to `askPi()`.
-  - **Graceful shutdown**: Listens for SIGINT (Ctrl+C) and SIGTERM signals. Closes MCP clients cleanly (prevents Python traceback from Engram), then stops bot without errors.
+  - **Graceful shutdown**: Listens for SIGINT (Ctrl+C) and SIGTERM signals. Closes MCP clients cleanly (prevents unhandled errors from child processes), then stops bot without errors.
   - **Voice/audio input**: `message:voice` and `message:audio` handlers download the file to a temp path, transcribe it (`handleIncomingAudio()`), feed the transcript through the normal agent flow (same as a typed message, including approval checks), then delete the temp file. On transcription failure it replies with a short error and does not crash.
   - **Reply modality (`deliverReply()`)**: the text reply is **always** sent first (immediate); a voice reply is added on top when `wantVoiceFor()` says so — by default only for voice/audio input (`/voz on|off` per-chat override wins, else `TELEGRAM_SEND_VOICE=true` forces global voice-on, else mirror the input). Voice output goes through Voicebox TTS and is transcoded WAV→OGG/Opus (`src/audio.ts:wavToOggOpus`, ffmpeg) so it arrives as a real Telegram **voice note** (`replyWithVoice`); falls back to `replyWithAudio` WAV if ffmpeg/opus is unavailable, and is skipped for replies >500 chars. `trySendVoice()` shows a `record_voice` chat action while generating.
 
@@ -63,7 +63,7 @@ pnpm reset-memory     # Restore MEMORY.md to git state
   - `initMcpClients()`: Reads `mcp.json`, connects to **all servers in parallel** (Promise.allSettled) with a **15s timeout per server** (Promise.race + AbortSignal.timeout). Bot starts even if servers are unreachable. HTTP transports get `AbortSignal.timeout` on requestInit.
   - `callMcpTool()`: Looks up client from `toolToClientMap`, calls tool, extracts text from MCP response.
   - `closeMcpClients()`: Gracefully disconnects all MCP servers (used on SIGINT/SIGTERM). Prevents unhandled errors from child processes.
-  - `hasMemoryServer`: Flag indicating if "engram" memory server is available; if not, falls back to file-based `update_memory` tool.
+  - `hasMemoryServer`: Flag indicating whether one of the MCP servers declared in `MCP_MEMORY_SERVERS` connected. Empty by default, so memory always runs on SQLite.
 
 - **events.ts**: WebSocket "brain" server for Mara UI (protocolo de eventos v1).
   - `startUiEvents()`: Listens on `MARA_BRAIN_WS_URL` (empty = disabled). Non-blocking; accepts new connections anytime.

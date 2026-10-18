@@ -65,7 +65,7 @@ Incluye:
 **Ubicación**: `config/MEMORY.md`
 **Propósito**: Almacenamiento de hechos y datos persistentes.
 
-Se usa como fallback cuando no hay servidor MCP de memoria (Engram). Cuando Engram está disponible, MEMORY.md se lee al inicio del contexto pero las escrituras van a Engram.
+Los recuerdos dinámicos se guardan en SQLite (`data/mara.db`). `MEMORY.md` se mantiene como archivo legacy editable a mano, y se lee al inicio del contexto.
 
 ## Caché
 

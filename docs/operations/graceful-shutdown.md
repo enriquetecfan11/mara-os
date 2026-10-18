@@ -22,7 +22,7 @@ process.on("SIGTERM", () => gracefulShutdown("SIGTERM"))
 ## Secuencia de Cierre
 
 1. **Recibir señal**: SIGINT (Ctrl+C) o SIGTERM
-2. **Cerrar MCP clients**: `closeMcpClients()` desconecta gracefulmente todos los servidores MCP, previniendo errores como el traceback de Python de Engram
+2. **Cerrar MCP clients**: `closeMcpClients()` desconecta gracefulmente todos los servidores MCP, previniendo errores de procesos hijos al cerrar
 3. **Detener bot de Telegram**: `bot.stop()` de grammy
 4. **Salir**: `process.exit(0)` con código de éxito
 

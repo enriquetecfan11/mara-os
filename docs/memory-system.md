@@ -10,12 +10,12 @@ Mara OS implementa un sistema de memoria de dos niveles, gestionado de forma aut
 │  (API unificada: remember, search, forget, list, get)       │
 └─────────────────────────┬───────────────────────────────────┘
                           │
-          ┌───────────────┴───────────────┐
-          ▼                               ▼
-   ┌───────────────┐               ┌───────────────┐
-   │  SQLite Store │               │ Engram Store  │
-   │  (local, FTS5)│               │ (MCP adapter) │
-   └───────────────┘               └───────────────┘
+          ┌───────────────────────────────┐
+          ▼                               │
+   ┌───────────────┐              registerMemoryStoreFactory()
+   │  SQLite Store │                       │
+   │  (local, FTS5)│◀──────────────────────┘
+   └───────────────┘
 ```
 
 ---
@@ -26,12 +26,11 @@ Mara OS implementa un sistema de memoria de dos niveles, gestionado de forma aut
 
 | Archivo | Responsabilidad |
 |---------|-----------------|
-| `memory-manager.ts` | API pública única, selección de backend |
+| `memory-manager.ts` | API pública única y punto de extensión del backend |
 | `conversation-store.ts` | Historial conversacional (corto plazo) |
 | `memory-extractor.ts` | Extracción automática de hechos (largo plazo) |
 | `context-builder.ts` | Construcción centralizada del system prompt |
 | `stores/sqlite.ts` | Backend SQLite con FTS5 y deduplicación |
-| `stores/engram.ts` | Adapter para servidor MCP Engram |
 | `migrate.ts` | Migración única MEMORY.md → SQLite |
 
 ### Flujo de una request
@@ -140,12 +139,22 @@ CREATE VIRTUAL TABLE memories_fts USING fts5(content, content=memories, content_
 
 **Cache LRU**: 500 entradas en memoria para lecturas frecuentes.
 
-### Backend Engram (opcional)
+### Backend personalizado (opcional)
 
-Si `mcp.json` contiene servidor `engram` conectado:
-- `MemoryManager` usa `EngramMemoryStore`
-- Delega a tools MCP: `remember`, `recall`, `forget`, `list_memories`, `get_memory`, `update_memory_access`
-- Mismos métodos públicos, cambio transparente
+El backend por defecto es SQLite y no depende de ningún servidor MCP. Para usar
+otro almacén (un servicio propio, una API, un MCP), implementa la interfaz
+`MemoryStore` de `src/memory/types.ts` y regístralo antes de que se cree el
+`MemoryManager` por primera vez:
+
+```ts
+import { registerMemoryStoreFactory } from "./memory/memory-manager.js"
+
+registerMemoryStoreFactory(() => new MiMemoryStore())
+```
+
+Los métodos públicos no cambian, así que el cambio es transparente para el resto
+del bot. Si además es un servidor MCP, declara su nombre en `MCP_MEMORY_SERVERS`
+para que cuente como backend de memoria en los logs.
 
 ### Tipos de memoria
 | Tipo | Descripción | Ejemplo |
@@ -218,8 +227,7 @@ await memory.clearConversation(chatId)
 await memory.getConversationTokenCount(chatId)
 
 // Metadatos
-memory.getBackendType()     // "engram" | "sqlite"
-memory.isUsingEngram()      // boolean
+memory.getBackendType()     // "sqlite" | "custom"
 await memory.close()        // shutdown graceful
 ```
 
@@ -235,7 +243,7 @@ await memory.close()        // shutdown graceful
 | `/memory list` | Lista 20 recuerdos más importantes |
 | `/memory forget <id>` | Elimina recuerdo por ID |
 
-**Funciona siempre** (SQLite o Engram), no requiere servidor MCP.
+**Funciona siempre** sobre SQLite, no requiere servidor MCP.
 
 ---
 
@@ -258,7 +266,7 @@ Al primer arranque (`runMemoryMigration()`):
 5. Inserta con importance 0.5, source "migration"
 6. Crea marcador para no repetir
 
-`MEMORY.md` se mantiene como archivo legacy (configuración manual/fija), pero nuevos recuerdos dinámicos van a SQLite/Engram.
+`MEMORY.md` se mantiene como archivo legacy (configuración manual/fija), pero los recuerdos dinámicos van a SQLite.
 
 ---
 

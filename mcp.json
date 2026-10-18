@@ -1,12 +1,6 @@
 {
   "servers": [
     {
-      "name": "engram",
-      "type": "stdio",
-      "command": "${UV_PATH:-${HOME}/.local/bin/uv}",
-      "args": ["--directory", "${ENGRAM_DIR:-${HOME}/Engram}", "run", "engram-server"]
-    },
-    {
       "name": "macos_automator",
       "type": "stdio",
       "command": "${NPX_PATH:-/opt/homebrew/bin/npx}",

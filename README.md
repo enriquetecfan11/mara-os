@@ -72,11 +72,12 @@ En **Raspberry Pi** hace falta además **Raspberry Pi OS de 64 bits**: tanto `be
 - **`VOICEBOX_PROFILE`**: Nombre del perfil de voz en Voicebox (default: `Mara`).
 - **`TELEGRAM_SEND_VOICE`**: Envía audio por defecto en nuevos chats (`true`/`false`, default: `false`). Se puede alternar por chat con `/voz on|off`.
 - **`MCP_DISABLED_SERVERS`**: Servidores MCP a desactivar, separados por comas. En una Raspberry Pi hay que poner `macos_automator`: depende de AppleScript y no puede funcionar fuera de macOS.
+- **`MCP_MEMORY_SERVERS`**: Servidores MCP que cuentan como backend de memoria, separados por comas. Vacío por defecto: la memoria va siempre a SQLite (`data/mara.db`), sin depender de ningún MCP.
 - **`MARA_BRAIN_WS_URL`**: URL del servidor WebSocket "brain" que emite eventos v1 a Mara UI. Vacío = desactivado (default). Ver [Integración con Mara UI](#integración-con-mara-ui).
 
 **Nota**: Las respuestas de más de 500 caracteres envían solo texto para evitar sobrecarga. El audio se genera en español (`language: "es"`).
 
-`mcp.json` admite `${VAR}` y `${VAR:-por_defecto}`, de modo que las rutas de binarios no quedan atadas a una máquina concreta. Ajusta `UV_PATH`, `NPX_PATH` y `ENGRAM_DIR` a donde estén en tu equipo.
+`mcp.json` admite `${VAR}` y `${VAR:-por_defecto}`, de modo que las rutas de binarios no quedan atadas a una máquina concreta. Ajusta `NPX_PATH` a donde esté en tu equipo.
 
 ## Archivos de Contexto (`config/`)
 

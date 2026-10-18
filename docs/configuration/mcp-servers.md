@@ -6,19 +6,13 @@
 {
   "servers": [
     {
-      "name": "engram",
-      "type": "stdio",
-      "command": "/Users/enriquetecfan/.local/bin/uv",
-      "args": ["--directory", "/Users/enriquetecfan/Engram", "run", "engram-server"]
-    },
-    {
       "name": "macos_automator",
       "type": "stdio",
-      "command": "/opt/homebrew/bin/npx",
+      "command": "${NPX_PATH:-/opt/homebrew/bin/npx}",
       "args": ["-y", "--package", "@steipete/macos-automator-mcp", "macos-automator-mcp"]
     },
-    { "name": "calendar", "type": "http", "url": "https://core-n8n.832gky.easypanel.host/mcp/calendar" },
-    { "name": "notes", "type": "http", "url": "https://core-n8n.832gky.easypanel.host/mcp/agents-notes" }
+    { "name": "calendar", "type": "http", "url": "${CALENDAR_MCP_URL:-https://core-n8n.832gky.easypanel.host/mcp/calendar}" },
+    { "name": "notes", "type": "http", "url": "${NOTES_MCP_URL:-https://core-n8n.832gky.easypanel.host/mcp/agents-notes}" }
   ]
 }
 ```
@@ -62,13 +56,6 @@
 | `url` | URL del endpoint MCP | Sí |
 
 ## Servidores Actuales
-
-### Engram (memoria persistente)
-
-- **Tipo**: stdio
-- **Tecnología**: SQLite + FTS5
-- **Propósito**: Memoria persistente con búsqueda de texto completo
-- **Tools**: 14 tools para recordar, olvidar, buscar y gestionar memoria
 
 ### macOS Automator
 

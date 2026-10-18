@@ -86,4 +86,4 @@ export function clearChatHistory(chatId: number) {
 }
 ```
 
-Esto no afecta la memoria persistente (MEMORY.md o Engram), solo el contexto inmediato de la conversación.
+Esto no afecta la memoria persistente (SQLite o MEMORY.md), solo el contexto inmediato de la conversación.

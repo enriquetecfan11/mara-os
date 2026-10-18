@@ -37,14 +37,14 @@ Mara OS es un asistente personal que conecta Telegram, un LLM local (Ollama) y s
 │  • Conecta servidores MCP (stdio y HTTP)                    │
 │  • Registra tools disponibles                                │
 │  • Despacha tool_calls al servidor correspondiente           │
-│  • Fallback a MEMORY.md si Engram no está disponible         │
+│  • Memoria en SQLite, sin depender de MCP                   │
 └──┬──────────┬──────────┬──────────┬─────────────────────────┘
-   │          │          │          │
-   ▼          ▼          ▼          ▼
-┌──────┐ ┌────────┐ ┌────────┐ ┌───────┐
-│Engram│ │  Mac   │ │Calendar│ │ Notes │
-│(mem.)│ │  Auto  │ │ (n8n)  │ │ (n8n) │
-└──────┘ └────────┘ └────────┘ └───────┘
+   │          │          │
+   ▼          ▼          ▼
+┌────────┐ ┌────────┐ ┌───────┐
+│  Mac   │ │Calendar│ │ Notes │
+│  Auto  │ │ (n8n)  │ │ (n8n) │
+└────────┘ └────────┘ └───────┘
 ```
 
 ## Stack Tecnológico
@@ -54,8 +54,8 @@ Mara OS es un asistente personal que conecta Telegram, un LLM local (Ollama) y s
 | Bot | grammy (TypeScript) |
 | LLM | Ollama (modelo local) |
 | Conexión MCP | @modelcontextprotocol/sdk |
-| Memoria | Engram (SQLite) o MEMORY.md |
-| Servidores MCP | 4 (Engram, macOS, Calendar, Notes) |
+| Memoria | SQLite (data/mara.db) + MEMORY.md |
+| Servidores MCP | 3 (macOS, Calendar, Notes) |
 
 ## Optimaciones
 

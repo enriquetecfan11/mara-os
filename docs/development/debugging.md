@@ -54,9 +54,9 @@ Si el modelo responde con texto en lugar de tool_calls:
 
 Busca en los logs:
 ```
-[MCP] Connected to server "engram"
-[MCP] Server "engram" tools: recall, remember, search, ...
-[MCP] Loaded 4 client(s) and 27 tool(s) for Ollama
+[MCP] Connected to server "calendar"
+[MCP] Server "calendar" tools: Date_Time1, Create_an_event, ...
+[MCP] Loaded 2 client(s) and 11 tool(s) for Ollama
 ```
 
 ## Problemas Comunes
@@ -91,5 +91,5 @@ Los servidores HTTP (calendar, notes) apuntan a un servicio n8n externo. Si no e
 
 ## Memoria
 
-- Si Engram está conectado: `[Memory] Memory mode: engram`
-- Si no: `[Memory] Memory mode: fallback MEMORY.md`
+- Si conectaste un servidor MCP de memoria (decláralo en `MCP_MEMORY_SERVERS`): `[Memory] Memory mode: MCP memory server`
+- Por defecto: `[Memory] Memory mode: SQLite (data/mara.db)`

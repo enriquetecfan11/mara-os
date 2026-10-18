@@ -7,7 +7,7 @@ Asistente personal vía Telegram + Ollama local + MCP.
 `/start` `/reset` `/help` `/status` — básicos  
 `/skill lista` `/skill <nombre>` `/skill recargar` — skills  
 `/cancel` — cancela lo que esté procesando  
-`/memory [query]` — busca recuerdos en Engram  
+`/memory [query]` — busca recuerdos en la memoria persistente  
 `/memory forget <id>` — olvida un recuerdo  
 `/feedback <texto>` — envía opinión
 
@@ -16,7 +16,7 @@ Asistente personal vía Telegram + Ollama local + MCP.
 - **Calendario** — crear/ver/modificar/eliminar eventos Google Calendar
 - **Notas/Tareas** — crear/ver/completar/eliminar
 - **Mac** — ejecutar AppleScript/JXA (abrir apps, scripts, etc.)
-- **Memoria** — recuerda datos vía Engram (SQLite + FTS5, 14 tools de memoria persistente)
+- **Memoria** — recuerda datos vía SQLite + FTS5 (local, zero LLM)
 - **Skills** — detección automática por keywords (calendario, notas, automatización, memoria)
 - **Fotos** — recibe imágenes, las procesa con contexto
 
@@ -33,8 +33,9 @@ Asistente personal vía Telegram + Ollama local + MCP.
 
 **Bot:** grammy (TypeScript)  
 **LLM:** Ollama (modelo: `ornith-1.5:9b`, url configurable)  
-**MCP:** 4 servidores — engram (memoria), macos_automator, calendar (n8n), notes (n8n) = 27 tools  
-**Memoria:** Engram (SQLite local, zero LLM). Si no disponible, fallback a `MEMORY.md`  
+**MCP:** 3 servidores — macos_automator, calendar (n8n), notes (n8n) = 13 tools  
+**Memoria:** SQLite local con FTS5 (`data/mara.db`), zero LLM. `MEMORY.md` como archivo legacy  
+**STT:** desactivado por defecto (`STT_ENABLED=false`)  
 **Contexto:** 5 archivos markdown cacheados por mtime
 
 ## Scripts
@@ -57,4 +58,4 @@ Asistente personal vía Telegram + Ollama local + MCP.
 | `config/AGENTS.md` | Reglas operativas |
 | `config/skills/` | Skills (calendario, notas, automatización, memoria) |
 | `mcp.json` | Definición de servidores MCP |
-| `~/.engram/engram.db` | Base de datos de memoria persistente |
+| `data/mara.db` | Base de datos de memoria persistente (SQLite) |

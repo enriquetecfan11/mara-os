@@ -79,7 +79,8 @@ function describeMcp(): string[] {
 async function describeMemory(): Promise<string[]> {
   try {
     const manager = getMemoryManager()
-    const backend = manager.isUsingEngram() ? "Engram (MCP)" : "SQLite (data/mara.db)"
+    const backend =
+      manager.getBackendType() === "sqlite" ? "SQLite (data/mara.db)" : "custom store"
     const entries = await manager.list(1000)
     const count = entries.length === 1000 ? "1000+" : String(entries.length)
     return [`Backend:    ${backend}`, `Recuerdos:  ${count}`]

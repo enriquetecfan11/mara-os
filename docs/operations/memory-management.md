@@ -1,75 +1,67 @@
 # Gestión de Memoria
 
-## Dos Modos de Memoria
+## Un único backend
 
-El bot soporta dos sistemas de memoria persistente, con detección automática:
+La memoria persistente vive en **SQLite** (`data/mara.db`), con FTS5 para búsqueda
+de texto completo. No depende de ningún servidor MCP, así que sigue funcionando
+aunque todos los servidores MCP estén caídos.
 
-### 1. Engram (MCP - SQLite)
+- Índice FTS5 para búsqueda por texto completo
+- Extracción automática de hechos tras cada respuesta (`memory-extractor.ts`)
+- Deduplicación por contenido normalizado antes de insertar
+- Caché LRU de 500 entradas para lecturas frecuentes
 
-Cuando el servidor MCP `engram` está conectado:
+## MEMORY.md (archivo legacy)
 
-- Base de datos SQLite con FTS5 (búsqueda de texto completo)
-- 14 tools de memoria: recordar, olvidar, buscar, recall, etc.
-- Operaciones vía protocolo MCP
-- Persistencia en `~/.engram/engram.db`
-- No usa el LLM para buscar, solo SQL
+`config/MEMORY.md` se mantiene como archivo editable a mano. Se lee al inicio
+del contexto del agente, pero los recuerdos dinámicos van a SQLite.
 
-### 2. MEMORY.md (Fallback - Archivo)
+Una migración única (`runMemoryMigration()`) vuelca su contenido a SQLite en el
+primer arranque y deja el marcador `config/.memory_migrated`.
 
-Cuando Engram no está disponible:
+## Cambiar el backend
 
-- Archivo markdown en `config/MEMORY.md`
-- Se escribe completo cada vez que se actualiza
-- Tool virtual `update_memory` que sobrescribe el archivo
-- Lectura en cada request (con caché por mtime)
+El backend es extensible sin tocar `MemoryManager`. Implementa la interfaz
+`MemoryStore` de `src/memory/types.ts` y regístralo antes de que se cree el
+`MemoryManager` por primera vez:
 
-## Detección Automática
+```ts
+import { registerMemoryStoreFactory } from "./memory/memory-manager.js"
 
-En `mcp.ts`:
-
-```typescript
-const memoryServerNames = new Set(["engram"])
-let hasMemoryServer = false
+registerMemoryStoreFactory(() => new MiMemoryStore())
 ```
 
-Si el servidor "engram" se conecta exitosamente, `hasMemoryServer = true` y se usan sus tools nativas. Si no, se inyecta la tool `update_memory` como fallback.
-
-## Tool Fallback: update_memory
-
-Cuando Engram no está disponible, `ollama.ts` añade automáticamente la tool `update_memory` a la lista de tools disponibles:
-
-```typescript
-!hasMemoryServer ? [{
-  type: "function",
-  function: {
-    name: "update_memory",
-    description: "Updates the MEMORY.md file with new or updated facts.",
-    parameters: { ... }
-  }
-}] : []
-```
-
-La ejecución escribe directamente en el archivo:
-
-```typescript
-await writeFile(memoryPath, newMemory, "utf8")
-```
+Los métodos públicos no cambian, así que el resto del bot no se entera. Si además
+el backend es un servidor MCP, declara su nombre en `MCP_MEMORY_SERVERS` para que
+cuente como servidor de memoria en los logs de arranque.
 
 ## Comandos
 
-- `/memory [query]` — Buscar recuerdos (usa Engram si está disponible)
+- `/memory [query]` — Buscar recuerdos
 - `/memory forget <id>` — Olvidar un recuerdo específico
-- `/reset` — Limpia el historial de conversación (no afecta memoria persistente)
+- `/reset` — Limpia el historial de conversación (no afecta a la memoria persistente)
 - `pnpm reset-bot` — Vacía MEMORY.md
-- `pnpm reset-memory` — Restaura MEMORY.md del estado de git
+- `pnpm reset-memory` — Restaura MEMORY.md desde git
 
-## Ver Estado de la Memoria
+## Ver el estado de la memoria
 
-```bash
-# En los logs de inicio:
-[Memory] Memory mode: engram
-# o
-[Memory] Memory mode: fallback MEMORY.md
+En los logs de arranque:
+
+```
+[Memory] Memory mode: SQLite (data/mara.db)
 ```
 
-O envía `/status` al bot.
+Si conectaste un servidor MCP de memoria declarado en `MCP_MEMORY_SERVERS`:
+
+```
+[Memory] Memory mode: MCP memory server
+```
+
+O envía `/status` al bot, que informa del backend y del número de recuerdos.
+
+## Notas
+
+- La base de datos vive en `/var/lib/mara/memory/mara.db` si existe ese
+  directorio o si `NODE_ENV=production`; en desarrollo, en `data/mara.db`.
+- El historial de conversación es otro almacén (`conversations` en la misma base)
+  y se resume automáticamente cuando supera el presupuesto de tokens.

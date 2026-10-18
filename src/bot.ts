@@ -292,7 +292,7 @@ bot.command("context", async (ctx) => {
     ...fileStates.map(file => `    ${file.name}: ${file.status}`),
     "",
     "  conversation:",
-    `    backend: persistent (SQLite/Engram)`,
+    `    backend: persistent (SQLite)`,
     "",
     "  skills:",
     ...(skills.length > 0 ? skills.map(skill => `    - ${skill}`) : ["    - none"]),

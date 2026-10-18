@@ -2,9 +2,7 @@ import { join } from "node:path"
 import { existsSync, mkdirSync } from "node:fs"
 import { MemoryStore, MemoryEntry, MemoryType, SearchOptions, SearchResult, ConversationStore } from "./types.js"
 import { createSqliteMemoryStore } from "./stores/sqlite.js"
-import { createEngramMemoryStore } from "./stores/engram.js"
 import { createConversationStore } from "./conversation-store.js"
-import { hasMemoryServer } from "../mcp.js"
 import { info, debug, error as logError, warn } from "../logger.js"
 import { agentDir } from "../config.js"
 
@@ -30,15 +28,23 @@ function getDbPath(): string {
   return DEFAULT_DB_PATH
 }
 
+// Punto de extensión del backend de memoria. Por defecto se usa SQLite sobre
+// data/mara.db. Para enchufar otro almacén (servicio propio, MCP, API…), llama a
+// registerMemoryStoreFactory con una fábrica que cumpla la interfaz MemoryStore
+// de ./types.ts, ANTES de que se cree el MemoryManager por primera vez.
+let storeFactory: (() => MemoryStore) | null = null
+
+export function registerMemoryStoreFactory(factory: () => MemoryStore): void {
+  storeFactory = factory
+}
+
 export class MemoryManager {
   private store: MemoryStore
   private conversationStore: ConversationStore
-  private useEngram: boolean
   private initialized = false
 
   constructor() {
-    this.useEngram = hasMemoryServer
-    this.store = this.useEngram ? createEngramMemoryStore() : createSqliteMemoryStore(getDbPath())
+    this.store = storeFactory ? storeFactory() : createSqliteMemoryStore(getDbPath())
     this.conversationStore = createConversationStore(getDbPath())
   }
 
@@ -46,7 +52,7 @@ export class MemoryManager {
     if (this.initialized) return
     await this.store.initialize()
     this.initialized = true
-    info("MemoryManager", `Initialized with ${this.useEngram ? "Engram" : "SQLite"} backend`)
+    info("MemoryManager", `Initialized with ${this.getBackendType()} backend`)
   }
 
   async remember(
@@ -105,12 +111,8 @@ export class MemoryManager {
     return this.conversationStore.getTokenCount(chatId)
   }
 
-  getBackendType(): "engram" | "sqlite" {
-    return this.useEngram ? "engram" : "sqlite"
-  }
-
-  isUsingEngram(): boolean {
-    return this.useEngram
+  getBackendType(): "sqlite" | "custom" {
+    return storeFactory ? "custom" : "sqlite"
   }
 
   private async ensureInitialized(): Promise<void> {

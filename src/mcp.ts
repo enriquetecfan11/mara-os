@@ -57,7 +57,14 @@ function expandEnvVars(value: unknown): unknown {
 
 export const clientsMap = new Map<string, Client>()
 export const toolToClientMap = new Map<string, Client>()
-export const memoryServerNames = new Set(["engram"])
+// Servidores MCP que cuentan como backend de "memoria". Vacío por defecto.
+// Declara aquí los tuyos con MCP_MEMORY_SERVERS=nombre1,nombre2.
+export const memoryServerNames = new Set(
+  (process.env.MCP_MEMORY_SERVERS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean),
+)
 export let hasMemoryServer = false
 export let ollamaTools: Array<any> = []
 
@@ -194,10 +201,12 @@ export async function initMcpClients() {
     })
 
     info("MCP", `Loaded ${clientsMap.size} client(s) and ${ollamaTools.length} tool(s) for Ollama`)
-    if (!hasMemoryServer) {
-      info("Memory", `No MCP memory server available; using fallback MEMORY.md`)
+    if (memoryServerNames.size === 0) {
+      debug("Memory", `MCP_MEMORY_SERVERS vacío: ningún servidor MCP cuenta como backend de memoria`)
+    } else if (!hasMemoryServer) {
+      warn("Memory", `Ninguno de los servidores MCP de memoria declarados (${Array.from(memoryServerNames).join(", ")}) conectó`)
     }
-    info("Memory", `Memory mode: ${hasMemoryServer ? "engram" : "fallback MEMORY.md"}`)
+    info("Memory", `Memory mode: ${hasMemoryServer ? "MCP memory server" : "SQLite (data/mara.db)"}`)
   } catch (err) {
     logError("MCP", `Error reading or parsing mcp.json: ${err}`)
   }
