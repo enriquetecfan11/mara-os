@@ -9,6 +9,9 @@ config/uploads/
 data/*.db
 data/*.db-*
 
+# Pesos de whisper descargados por transformers.js (STT_CACHE_DIR). Hundreds of MB.
+data/models/
+
 .gitignore
 .claude
 .codegraph/

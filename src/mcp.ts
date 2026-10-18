@@ -8,6 +8,53 @@ import { info, error as logError, debug, warn } from "./logger.js"
 
 const SERVER_CONNECT_TIMEOUT_MS = 15_000
 
+// Env MCP opcional: desactiva servidores por nombre sin tocar mcp.json.
+// Útil en la Raspberry Pi, donde macos_automator no puede funcionar (manda AppleScript).
+const disabledMcpServers = new Set(
+  (process.env.MCP_DISABLED_SERVERS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean),
+)
+
+/**
+ * Sustituye ${VAR} y ${VAR:-por_defecto} por variables de entorno, para que
+ * mcp.json no lleve rutas absolutas atadas a una máquina concreta (las de uv,
+ * npx o ffmpeg cambian entre un Mac y la Raspberry Pi).
+ */
+function expandString(input: string): string {
+  let out = input
+
+  // Primera pasada: los ${VAR} sin default. Así los anidados se resuelven antes,
+  // porque ${UV_PATH:-${HOME}/.local/bin/uv} necesita Expanding $HOME primero.
+  for (let i = 0; i < 5; i++) {
+    const next = out.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, name: string) => process.env[name] ?? "")
+    if (next === out) break
+    out = next
+  }
+
+  // Segunda pasada: los ${VAR:-por_defecto}.
+  return out.replace(
+    /\$\{([A-Za-z_][A-Za-z0-9_]*):-([^}]*)\}/g,
+    (_, name: string, fallback: string) => process.env[name] ?? fallback,
+  )
+}
+
+function expandEnvVars(value: unknown): unknown {
+  if (typeof value === "string") {
+    return expandString(value)
+  }
+  if (Array.isArray(value)) {
+    return value.map(expandEnvVars)
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, expandEnvVars(v)]),
+    )
+  }
+  return value
+}
+
 export const clientsMap = new Map<string, Client>()
 export const toolToClientMap = new Map<string, Client>()
 export const memoryServerNames = new Set(["engram"])
@@ -108,9 +155,30 @@ export async function initMcpClients() {
     const mcpConfigContent = await readFile(mcpConfigPath, "utf8")
     const mcpConfig = JSON.parse(mcpConfigContent) as McpConfig
     info("MCP", `Loading config from ${mcpConfigPath}`)
-    info("MCP", `Servers configured: ${mcpConfig.servers.map((server) => `${server.name}:${server.type ?? "http"}`).join(", ")}`)
 
-    const servers = mcpConfig.servers
+    const allServers = mcpConfig.servers
+    const enabledServers = disabledMcpServers.size
+      ? allServers.filter((s) => !disabledMcpServers.has(s.name))
+      : allServers
+
+    if (disabledMcpServers.size) {
+      const skipped = allServers.filter((s) => disabledMcpServers.has(s.name)).map((s) => s.name)
+      if (skipped.length > 0) {
+        info("MCP", `Disabled by MCP_DISABLED_SERVERS: ${skipped.join(", ")}`)
+      }
+    }
+
+    // Resuelve ${VAR} / ${VAR:-por_defecto} contra el entorno para que mcp.json
+    // no lleve rutas absolutas atadas a una máquina.
+    const expanded = expandEnvVars({ servers: enabledServers }) as McpConfig
+    const servers = expanded.servers.filter((s) => s.command || s.url)
+
+    if (servers.length < enabledServers.length) {
+      warn("MCP", `${enabledServers.length - servers.length} server(s) descartados: faltan command/url tras expandir las variables`)
+    }
+
+    info("MCP", `Servers configured: ${servers.map((server) => `${server.name}:${server.type ?? "http"}`).join(", ")}`)
+
     configuredServers = servers.map((server) => server.name)
     failedServers.clear()
 

@@ -17,16 +17,20 @@ El proyecto está diseñado para ser sencillo, legible y fácil de personalizar.
 
 ## Requisitos
 
-- Node.js (v18+)
-- pnpm o npm
-- Un bot de Telegram (puedes crear uno con [@BotFather](https://t.me/BotFather))
-- Ollama instalado y ejecutándose localmente
-- (Opcional) Voicebox instalado y ejecutándose para síntesis de voz
+- **Node.js >= 20.11** (ver `.nvmrc`).
+- **pnpm**. Obligatorio: `pnpm-workspace.yaml` es lo que autoriza la ejecución de los scripts de instalación nativos de `better-sqlite3` y `sharp`. Con `npm install` se instalan sin compilar y el bot falla al arrancar.
+- **ffmpeg** en el PATH. Solo se usa para transcribir audio.
+- Un bot de Telegram (puedes crear uno con [@BotFather](https://t.me/BotFather)).
+- Un servidor **Ollama** accesible en la red (no hace falta en la misma máquina).
+- (Opcional) Voicebox instalado y ejecutándose para síntesis de voz.
+
+En **Raspberry Pi** hace falta además **Raspberry Pi OS de 64 bits**: tanto `better-sqlite3` como `onnxruntime-node` distribuyen sus binarios `linux-arm64` dentro del propio paquete de npm, pero no hay builds de 32 bits. No hace falta compilar nada a mano.
 
 ## Instalación y Configuración
 
 1. Instala las dependencias del proyecto:
    ```bash
+   corepack enable
    pnpm install
    ```
 
@@ -40,11 +44,14 @@ El proyecto está diseñado para ser sencillo, legible y fácil de personalizar.
    TELEGRAM_TOKEN=tu_token_de_telegram
    OLLAMA_URL=http://192.168.1.182:11434
    OLLAMA_MODEL=ornith-1.5:9b
+   OLLAMA_NUM_CTX=16384
    TIMEZONE=Europe/Madrid
+   STT_ENABLED=false
    VOICEBOX_URL=http://192.168.1.79:17493
-   VOICEBOX_ENABLED=true
-   VOICEBOX_PROFILE=Alex
-   TELEGRAM_SEND_VOICE=true
+   VOICEBOX_ENABLED=false
+   VOICEBOX_PROFILE=Mara
+   TELEGRAM_SEND_VOICE=false
+   MCP_DISABLED_SERVERS=macos_automator
    MARA_BRAIN_WS_URL=ws://0.0.0.0:9000
    ```
 
@@ -54,14 +61,22 @@ El proyecto está diseñado para ser sencillo, legible y fácil de personalizar.
 - **`TELEGRAM_CHAT_ID`**: ID del chat donde enviar mensajes de startup (opcional).
 - **`OLLAMA_URL`**: URL del servidor Ollama (default: `http://192.168.1.182:11434`).
 - **`OLLAMA_MODEL`**: Modelo a usar en Ollama (default: `ornith-1.5:9b`, con soporte de tool calling).
+- **`OLLAMA_NUM_CTX`**: Ventana de contexto por petición (default: `16384`). **No lo bajes del default de Ollama**: si el Modelfile no define `num_ctx`, el servidor usa 4096 tokens y las tools MCP del prompt (~3k) desbordan cualquier mensaje con `400 exceed_context_size_error`.
 - **`TIMEZONE`**: Zona horaria (default: `Europe/Madrid`).
+- **`STT_ENABLED`**: Interruptor maestro de transcripción de voz (default: `true`). Con `false` el bot no descarga el audio, no carga whisper y no llama a Voicebox: contesta al instante con un aviso.
+- **`STT_LOCAL_ENABLED`**: Solo si `STT_ENABLED=true`. `true` = whisper en esta máquina, `false` = Voicebox (default: `true`).
+- **`STT_MODEL`**: Modelo whisper para transformers.js: `Xenova/whisper-tiny`, `-base`, `-small`, o `onnx-community/whisper-large-v3-turbo`. OJO: el turbo exige onnxruntime >= 1.20 (IR version 10); con `@xenova/transformers` 2.x falla con `Unsupported model IR version: 10`.
+- **`STT_CACHE_DIR`**: Dónde se guardan los pesos de whisper (default: `./data/models`). Nunca dentro de `node_modules`: un `pnpm install` los borra y obliga a volver a bajar cientos de MB.
 - **`VOICEBOX_URL`**: URL del servidor Voicebox para TTS (default: `http://192.168.1.79:17493`).
 - **`VOICEBOX_ENABLED`**: Habilita síntesis de voz (`true`/`false`, default: `false`).
-- **`VOICEBOX_PROFILE`**: Nombre del perfil de voz en Voicebox (default: `Alex`).
+- **`VOICEBOX_PROFILE`**: Nombre del perfil de voz en Voicebox (default: `Mara`).
 - **`TELEGRAM_SEND_VOICE`**: Envía audio por defecto en nuevos chats (`true`/`false`, default: `false`). Se puede alternar por chat con `/voz on|off`.
+- **`MCP_DISABLED_SERVERS`**: Servidores MCP a desactivar, separados por comas. En una Raspberry Pi hay que poner `macos_automator`: depende de AppleScript y no puede funcionar fuera de macOS.
 - **`MARA_BRAIN_WS_URL`**: URL del servidor WebSocket "brain" que emite eventos v1 a Mara UI. Vacío = desactivado (default). Ver [Integración con Mara UI](#integración-con-mara-ui).
 
 **Nota**: Las respuestas de más de 500 caracteres envían solo texto para evitar sobrecarga. El audio se genera en español (`language: "es"`).
+
+`mcp.json` admite `${VAR}` y `${VAR:-por_defecto}`, de modo que las rutas de binarios no quedan atadas a una máquina concreta. Ajusta `UV_PATH`, `NPX_PATH` y `ENGRAM_DIR` a donde estén en tu equipo.
 
 ## Archivos de Contexto (`config/`)
 
@@ -71,10 +86,11 @@ El agente define su comportamiento mediante archivos Markdown ubicados en la car
 - **`USER.md`**: Información estable sobre el usuario (preferencias, tecnologías que usa, ubicación, etc.) para que el agente tenga contexto al responder.
 - **`AGENTS.md`**: Reglas operativas y del canal (por ejemplo, evitar markdown en Telegram, cómo y cuándo guardar recuerdos, límites de seguridad).
 - **`MEMORY.md`**: Memoria duradera local. El bot la usa como fuente persistente cuando no hay servidor MCP de memoria disponible.
+- **`skills/`**: Guías Specialized que se inyectan en el contexto cuando el mensaje del usuario encaja con sus palabras clave.
 
 ## Ejecución
 
-Antes de arrancar, puedes comprobar que el backend de Ollama está operativo (conectividad, modelo presente, respuesta de texto y tool calling):
+Antes de arrancar, comprueba el backend de Ollama (conectividad, modelo presente, respuesta de texto y **tool calling**, de lo que dependen las herramientas MCP):
 
 ```bash
 pnpm check:ollama
@@ -91,6 +107,31 @@ Variante ligera, sin MCP ni UI:
 ```bash
 pnpm bot:lite
 ```
+
+El proceso usa `process.cwd()` para localizar `config/` y `mcp.json`: **arráncalo siempre desde la raíz del repositorio**. Bajo systemd, fija `WorkingDirectory`.
+
+## Diagnóstico
+
+| Comando | Qué hace |
+|---|---|
+| `pnpm check:ollama` | Conectividad, modelo disponible, respuesta de texto y tool calling |
+| `pnpm check:stt` | Confirma si el STT está activo o neutralizado |
+| `pnpm bench:stt <modelo>` | Mide precisión y velocidad de un modelo whisper sobre un audio real |
+| `pnpm typecheck` | TypeScript sin emitir |
+
+`pnpm bench:stt` es la herramienta para decidir el modelo de STT en un equipo concreto:
+
+```bash
+pnpm bench:stt Xenova/whisper-small
+```
+
+## Notas para Raspberry Pi
+
+- **64 bits obligatorio.** `better-sqlite3` y `onnxruntime-node` publican `linux-arm64` dentro del paquete de npm; no existe build de 32 bits.
+- **Whisper local no es viable.** En una Pi 5, `whisper-tiny` tarda ~5 s en 5 s de audio y `whisper-large-v3-turbo` ~68 s. Los modelos que transcriben bien no llegan a tiempo, así que lo razonable es `STT_ENABLED=false` y delegar en Voicebox si está disponible.
+- **Espacio en la SD.** La dependencia `@xenova/transformers` ocupa ~183 MB en `node_modules` aunque el STT esté apagado (los binarios nativos vienen para todas las plataformas). Con STT activo, los pesos se guardan en `STT_CACHE_DIR`.
+- **`macos_automator` no puede funcionar.** Ponlo en `MCP_DISABLED_SERVERS`; si no, solo aporta tools muertas al contexto del LLM.
+- `data/` (base de datos), `data/models/` y `config/uploads/` se crean solas en runtime.
 
 ## Integración con Mara UI
 
@@ -149,6 +190,11 @@ Al conectar (o reconectar) un cliente, el brain reenvía el estado actual, el ú
 ```txt
 src/
   bot.ts              # Lógica principal del bot, conexión con Telegram y Ollama
+  ollama.ts           # Cliente de Ollama: chat, tool calling y reintentos
+  ollama-http.ts      # num_ctx por petición y lectura del cuerpo de error
+  stt.ts              # Transcripción local con whisper (transformers.js)
+  voicebox.ts         # TTS y STT remotos vía Voicebox
+  mcp.ts              # Conexión a los servidores MCP y construcción de tools
   events.ts           # Servidor WebSocket "brain" + protocolo de eventos v1 (Mara UI)
   approvals.ts        # Control básico de confirmaciones de seguridad
   telegram-files.ts   # Helper para descarga de archivos e imágenes de Telegram
@@ -158,4 +204,10 @@ config/
   USER.md             # Información del usuario (Kike)
   AGENTS.md           # Reglas de formato y comportamiento
   MEMORY.md           # Memoria compartida y persistente
+  skills/             # Guías Specialized por palabra clave
+
+scripts/
+  check-ollama.ts     # Diagnóstico del backend de Ollama
+  check-stt-off.ts    # Comprueba que el STT queda neutralizado
+  bench-stt.ts        # Compara modelos whisper sobre un audio real
 ```
