@@ -3,6 +3,7 @@ import { ollamaTools, callMcpTool } from "./mcp.js"
 import { loadAllSkills, detectSkills, loadSkillsContext } from "./skills.js"
 import { readContextFile } from "./cache.js"
 import { info, error as logError, debug, warn } from "./logger.js"
+import { ollamaOptions, readOllamaError } from "./ollama-http.js"
 import { getMemoryManager, initializeMemory } from "./memory/index.js"
 import { buildContext } from "./memory/context-builder.js"
 import { extractAndStoreMemories } from "./memory/memory-extractor.js"
@@ -100,16 +101,25 @@ export async function askPi(chatId: number, message: string) {
   try {
     let loop = true
     let replyText = ""
+    let toolRounds = 0
+
+    // Vive FUERA del bucle: cada ronda de tool calling tiene que ir añadiendo
+    // la respuesta del asistente y el resultado de las tools. Si se reconstruyera
+    // desde `recentMessages` en cada iteración, el modelo nunca vería los
+    // resultados y volvería a pedir la misma tool en bucle hasta el timeout.
+    const messages: Array<{ role: string; content: string }> = [
+      { role: "system", content: systemPrompt },
+      ...recentMessages.map((m) => ({ role: m.role, content: m.content })),
+    ]
+
+    // Tope de rondas de tool calling para no quedarnos colgados en un bucle
+    // (el modelo puede seguir pidiendo tools indefinidamente).
+    const MAX_TOOL_ROUNDS = 8
 
     while (loop) {
       if (controller.signal.aborted) {
         throw controller.signal.reason || new Error("Request cancelled")
       }
-
-      const messages = [
-        { role: "system" as const, content: systemPrompt },
-        ...recentMessages.map((m) => ({ role: m.role as "user" | "assistant" | "tool", content: m.content })),
-      ]
 
       debug("Ollama", `Sending request to ${ollamaUrl}/api/chat using model: ${ollamaModel} (${messages.length} messages)...`)
 
@@ -126,11 +136,12 @@ export async function askPi(chatId: number, message: string) {
           tools: ollamaTools,
           tool_choice: ollamaTools.length > 0 ? "required" : "none",
           temperature: 0.3,
+          options: ollamaOptions(),
         }),
       })
 
       if (!response.ok) {
-        throw new Error(`Ollama request failed: ${response.status} ${response.statusText}`)
+        throw new Error(await readOllamaError(response))
       }
 
       const data = (await response.json()) as {
@@ -149,7 +160,20 @@ export async function askPi(chatId: number, message: string) {
       const assistantMessage = data.message
 
       if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
+        if (toolRounds >= MAX_TOOL_ROUNDS) {
+          warn("Ollama", `Reached the limit of ${MAX_TOOL_ROUNDS} tool rounds; stopping to avoid a loop`)
+          break
+        }
+        toolRounds++
+
         info("Ollama", `Received ${assistantMessage.tool_calls.length} tool call(s)`)
+
+        // La assistant message (con sus tool_calls) debe volver al historial:
+        // si no, el modelo no puede asociar cada resultado con su tool call.
+        messages.push({
+          role: "assistant",
+          content: assistantMessage.content ?? "",
+        })
 
         const toolResults = await Promise.all(
           assistantMessage.tool_calls.map(async (toolCall) => {
@@ -177,6 +201,7 @@ export async function askPi(chatId: number, message: string) {
         )
 
         for (const result of toolResults) {
+          messages.push(result)
           await memoryManager.addConversationMessage(chatId, {
             role: "tool",
             content: result.content,

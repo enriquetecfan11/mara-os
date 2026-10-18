@@ -2,6 +2,7 @@ import { ollamaUrl, ollamaModel } from "../config.js"
 import { MemoryManager } from "./memory-manager.js"
 import { ExtractionResult, ExtractedMemory, MemoryType } from "./types.js"
 import { info, debug, error as logError, warn } from "../logger.js"
+import { ollamaOptions, readOllamaError } from "../ollama-http.js"
 
 const EXTRACTION_PROMPT = `Eres un extractor de memoria para un asistente personal. Analiza la conversación y extrae SOLO información que sea útil recordar a largo plazo.
 
@@ -56,11 +57,12 @@ async function callOllamaForExtraction(prompt: string): Promise<string> {
       stream: false,
       temperature: 0.1,
       format: "json",
+      options: ollamaOptions(),
     }),
   })
 
   if (!response.ok) {
-    throw new Error(`Ollama extraction failed: ${response.status}`)
+    throw new Error(await readOllamaError(response))
   }
 
   const data = await response.json()

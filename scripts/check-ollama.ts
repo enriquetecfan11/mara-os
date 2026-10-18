@@ -6,6 +6,7 @@
 // Sale con código 0 si todo va bien, 1 si algo falla.
 
 import { ollamaUrl, ollamaModel } from "../src/config.js"
+import { ollamaOptions, readOllamaError } from "../src/ollama-http.js"
 
 const TIMEOUT_PING_MS = 5_000
 const TIMEOUT_MODELS_MS = 10_000
@@ -97,11 +98,11 @@ async function chat(body: Record<string, unknown>): Promise<{ data: ChatResponse
     method: "POST",
     headers: { "Content-Type": "application/json" },
     signal: AbortSignal.timeout(TIMEOUT_CHAT_MS),
-    body: JSON.stringify({ model: ollamaModel, stream: false, ...body }),
+    body: JSON.stringify({ model: ollamaModel, stream: false, options: ollamaOptions(), ...body }),
   })
   const ms = Date.now() - t0
   if (!res.ok) {
-    throw new Error(`HTTP ${res.status} ${res.statusText}`)
+    throw new Error(await readOllamaError(res))
   }
   return { data: (await res.json()) as ChatResponse, ms }
 }
