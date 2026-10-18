@@ -2,9 +2,9 @@ import { Bot, InputFile, type Context } from "grammy"
 import { randomUUID } from "node:crypto"
 import { appendFile, unlink, writeFile, mkdir } from "node:fs/promises"
 import { join } from "node:path"
-import { approvalMessage, hasApproval, needsApproval } from "./approvals.js"
+import { approvalMessage, sttDisabledMessage, hasApproval, needsApproval } from "./approvals.js"
 import { saveTelegramPhoto, saveTelegramFile } from "./telegram-files.js"
-import { telegramToken, telegramChatId, uploadsDir, ollamaUrl, ollamaModel, agentDir, timezone, voiceboxEnabled, telegramSendVoiceDefault, sttLocalEnabled, maraUserName } from "./config.js"
+import { telegramToken, telegramChatId, uploadsDir, ollamaUrl, ollamaModel, agentDir, timezone, voiceboxEnabled, telegramSendVoiceDefault, sttEnabled, sttLocalEnabled, maraUserName } from "./config.js"
 import { askPiWithRetry, clearChatHistory, cancelRequest } from "./ollama.js"
 import { readContextFile } from "./cache.js"
 import { info, error as logError, warn } from "./logger.js"
@@ -226,6 +226,14 @@ bot.on("message:voice", async (ctx) => {
   const username = ctx.from?.username || ctx.from?.first_name || "Unknown"
   info("Telegram", `Received voice from @${username}`)
 
+  // STT apagado: no descargamos ni transcribimos, contestamos al momento.
+  if (!sttEnabled) {
+    info("Telegram", "STT disabled; replying without transcription")
+    setState("idle")
+    await ctx.reply(sttDisabledMessage)
+    return
+  }
+
   await enqueue(ctx.chat!.id, async () => {
     const t0 = Date.now()
     const typing = startTyping(ctx.chat!.id)
@@ -340,6 +348,14 @@ async function handleBrowserAudio(wav: Buffer): Promise<void> {
   const audioPath = join(uploadsDir, `browser-${Date.now()}.wav`)
   let transcript: string | undefined
   const t0 = Date.now()
+
+  // STT apagado: ni siquiera escribimos el clip a disco ni cargamos whisper.
+  if (!sttEnabled) {
+    info("Telegram", `[mic] STT disabled; ${wav.length} bytes descartados`)
+    setState("idle")
+    emitError(sttDisabledMessage)
+    return
+  }
 
   await enqueue(chatId, async () => {
     try {

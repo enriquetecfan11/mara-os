@@ -1,6 +1,7 @@
-import { pipeline, type AutomaticSpeechRecognitionPipeline } from "@xenova/transformers"
+import { pipeline, env, type AutomaticSpeechRecognitionPipeline } from "@xenova/transformers"
 import { readFile } from "node:fs/promises"
-import { sttModel, sttLanguage, sttTimeoutMs } from "./config.js"
+import { mkdirSync } from "node:fs"
+import { sttModel, sttLanguage, sttTimeoutMs, sttCacheDir } from "./config.js"
 import { transcodeToWavPcm } from "./audio.js"
 import { debug, info, error as logError } from "./logger.js"
 
@@ -12,6 +13,19 @@ let transcriber: AutomaticSpeechRecognitionPipeline | null = null
 
 async function getTranscriber(): Promise<AutomaticSpeechRecognitionPipeline> {
   if (transcriber) return transcriber
+
+  // Los pesos se guardan fuera de node_modules: si no, un `pnpm install` en la
+  // Raspberry Pi los borra y obliga a volver a bajar más de 1 GB.
+  if (sttCacheDir) {
+    try {
+      mkdirSync(sttCacheDir, { recursive: true })
+      env.cacheDir = sttCacheDir
+      debug("STT", `Cache de modelos en ${sttCacheDir}`)
+    } catch (err) {
+      logError("STT", `No se pudo preparar la cache de modelos en ${sttCacheDir}: ${err}`)
+    }
+  }
+
   debug("STT", `Cargando whisper (${sttModel})…`)
   transcriber = (await pipeline(
     "automatic-speech-recognition",

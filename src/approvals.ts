@@ -4,6 +4,10 @@ const approvalWords = /^(confirmo|confirmado|sí,?\s*confirmo|si,?\s*confirmo)\b
 export const approvalMessage =
   "Esto sale fuera de Telegram. Si quieres hacerlo, empieza el mensaje por: Confirmo"
 
+// Respuesta al audio cuando el STT está apagado (STT_ENABLED=false).
+export const sttDisabledMessage =
+  "Ahora mismo no proceso notas de voz. Escríbeme el mensaje y te contesto al momento."
+
 export function needsApproval(message: string) {
   return riskyWords.test(message)
 }
