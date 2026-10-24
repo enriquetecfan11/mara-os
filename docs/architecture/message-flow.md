@@ -29,22 +29,26 @@ bot.on("message:text", async (ctx) => { ... })
    - `{{MEMORY}}` → contenido de MEMORY.md
    - `{{SKILLS}}` → skills detectados
 
-### 3. Envío a Ollama
+### 3. Envío al servidor de inferencia
+
+La petición se construye con `llmChatBody()` (`src/ollama-http.ts`), que emite el
+cuerpo en el dialecto configurado por `OLLAMA_API`:
 
 ```typescript
-fetch("http://192.168.1.182:11434/api/chat", {
-  body: JSON.stringify({
-    model: ollamaModel,
+// OLLAMA_API=ollama → POST {OLLAMA_URL}/api/chat
+// OLLAMA_API=openai → POST {OLLAMA_URL}/v1/chat/completions
+fetch(llmChatEndpoint(), {
+  headers: llmHeaders(true),   // incluye Authorization: Bearer <OLLAMA_API_KEY>
+  body: JSON.stringify(llmChatBody({
     messages: [{ role: "system", content: systemPrompt }, ...history],
-    stream: false,
     tools: ollamaTools,
-    tool_choice: "required",
-    temperature: 0.3
-  })
+    temperature: 0.3,
+    requireTool: true,
+  }))
 })
 ```
 
-- `tool_choice: "required"` fuerza al modelo a usar herramientas.
+- En dialecto `ollama`, `requireTool` envía `tool_choice: "required"` (fuerza al modelo a usar herramientas). En dialecto `openai` se envía `tool_choice: "auto"`: `"required"` obligaría a llamar a una tool incluso en una conversación normal y rompería el chat.
 - `temperature: 0.3` reduce la no-determinismo del modelo cuantizado.
 - Timeout de 60s por request.
 
@@ -54,7 +58,7 @@ El bucle principal:
 
 ```
 while (hay_tool_calls) {
-  1. Enviar mensaje + historial a Ollama
+  1. Enviar mensaje + historial al proveedor activo (`getActiveLlm()`)
   2. Recibir respuesta (texto + tool_calls opcionales)
   3. Si hay tool_calls:
      a. Ejecutar todas en paralelo via Promise.all()
@@ -79,7 +83,7 @@ while (hay_tool_calls) {
 ## Diagrama de Flujo
 
 ```
-Usuario ──▶ Telegram ──▶ bot.ts ──▶ ollama.ts ──▶ Ollama API
+Usuario ──▶ Telegram ──▶ bot.ts ──▶ ollama.ts ──▶ proveedor activo (Ollama / Unsloth / Groq)
                 ▲                                    │
                 │                                    ▼
                 │                            ¿tool_calls?

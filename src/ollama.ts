@@ -1,21 +1,34 @@
-import { ollamaUrl, ollamaModel } from "./config.js"
+import { getActiveLlm } from "./providers.js"
 import { ollamaTools, callMcpTool } from "./mcp.js"
 import { loadAllSkills, detectSkills, loadSkillsContext } from "./skills.js"
 import { readContextFile } from "./cache.js"
 import { info, error as logError, debug, warn } from "./logger.js"
-import { ollamaOptions, readOllamaError } from "./ollama-http.js"
+import {
+  assistantToolCallMessage,
+  llmChatBody,
+  llmChatEndpoint,
+  llmHeaders,
+  llmModelsEndpoint,
+  parseLlmChat,
+  readLlmError,
+  toolResultMessage,
+  type LlmMessage,
+} from "./ollama-http.js"
 import { getMemoryManager, initializeMemory } from "./memory/index.js"
 import { buildContext } from "./memory/context-builder.js"
 import { extractAndStoreMemories } from "./memory/memory-extractor.js"
 
 /**
- * Ping de salud a Ollama. Timeout corto y no lanza: devuelve false si no
- * responde. Pensado para diagnósticos (mensaje de arranque, /help), no para el
- * flujo de chat.
+ * Ping de salud al servidor de inferencia. Timeout corto y no lanza: devuelve
+ * false si no responde (ni si la API key es incorrecta). Pensado para
+ * diagnósticos (mensaje de arranque, /help), no para el flujo de chat.
  */
 export async function pingOllama(timeoutMs = 5000): Promise<boolean> {
   try {
-    const res = await fetch(`${ollamaUrl}/api/version`, { signal: AbortSignal.timeout(timeoutMs) })
+    const res = await fetch(llmModelsEndpoint(), {
+      headers: llmHeaders(),
+      signal: AbortSignal.timeout(timeoutMs),
+    })
     return res.ok
   } catch {
     return false
@@ -107,9 +120,9 @@ export async function askPi(chatId: number, message: string) {
     // la respuesta del asistente y el resultado de las tools. Si se reconstruyera
     // desde `recentMessages` en cada iteración, el modelo nunca vería los
     // resultados y volvería a pedir la misma tool en bucle hasta el timeout.
-    const messages: Array<{ role: string; content: string }> = [
+    const messages: LlmMessage[] = [
       { role: "system", content: systemPrompt },
-      ...recentMessages.map((m) => ({ role: m.role, content: m.content })),
+      ...recentMessages.map((m) => ({ role: m.role as LlmMessage["role"], content: m.content })),
     ]
 
     // Tope de rondas de tool calling para no quedarnos colgados en un bucle
@@ -121,81 +134,55 @@ export async function askPi(chatId: number, message: string) {
         throw controller.signal.reason || new Error("Request cancelled")
       }
 
-      debug("Ollama", `Sending request to ${ollamaUrl}/api/chat using model: ${ollamaModel} (${messages.length} messages)...`)
+      debug("Ollama", `Sending request to ${llmChatEndpoint()} using model: ${getActiveLlm().model} (${messages.length} messages)...`)
 
-      const response = await fetch(`${ollamaUrl}/api/chat`, {
+      const response = await fetch(llmChatEndpoint(), {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: llmHeaders(true),
         signal: controller.signal,
-        body: JSON.stringify({
-          model: ollamaModel,
-          messages,
-          stream: false,
-          tools: ollamaTools,
-          tool_choice: ollamaTools.length > 0 ? "required" : "none",
-          temperature: 0.3,
-          options: ollamaOptions(),
-        }),
+        body: JSON.stringify(
+          llmChatBody({
+            messages,
+            tools: ollamaTools,
+            temperature: 0.3,
+            requireTool: true,
+          }),
+        ),
       })
 
       if (!response.ok) {
-        throw new Error(await readOllamaError(response))
+        throw new Error(await readLlmError(response))
       }
 
-      const data = (await response.json()) as {
-        message: {
-          role: "assistant"
-          content: string
-          tool_calls?: Array<{
-            function: {
-              name: string
-              arguments: any
-            }
-          }>
-        }
-      }
+      const { content: assistantContent, toolCalls } = parseLlmChat(await response.json())
 
-      const assistantMessage = data.message
-
-      if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
+      if (toolCalls.length > 0) {
         if (toolRounds >= MAX_TOOL_ROUNDS) {
           warn("Ollama", `Reached the limit of ${MAX_TOOL_ROUNDS} tool rounds; stopping to avoid a loop`)
           break
         }
         toolRounds++
 
-        info("Ollama", `Received ${assistantMessage.tool_calls.length} tool call(s)`)
+        info("Ollama", `Received ${toolCalls.length} tool call(s)`)
 
         // La assistant message (con sus tool_calls) debe volver al historial:
         // si no, el modelo no puede asociar cada resultado con su tool call.
-        messages.push({
-          role: "assistant",
-          content: assistantMessage.content ?? "",
-        })
+        // En el dialecto OpenAI esto es obligatorio (400 si falta).
+        messages.push(assistantToolCallMessage(toolCalls, assistantContent))
 
         const toolResults = await Promise.all(
-          assistantMessage.tool_calls.map(async (toolCall) => {
-            const toolName = toolCall.function.name
-            let toolArgs = toolCall.function.arguments
-
-            if (typeof toolArgs === "string") {
-              try {
-                toolArgs = JSON.parse(toolArgs)
-              } catch {
-                // Keep as string
-              }
-            }
+          toolCalls.map(async (toolCall) => {
+            const toolName = toolCall.name
+            const toolArgs = toolCall.arguments
 
             debug("Tool", `Executing tool "${toolName}" with arguments: ${JSON.stringify(toolArgs)}`)
 
             try {
               const resultStr = await callMcpTool(toolName, toolArgs)
-              return { role: "tool" as const, content: resultStr }
+              return toolResultMessage(toolCall, resultStr)
             } catch (err: any) {
               logError("MCP", `Error executing tool "${toolName}": ${err}`)
-              return { role: "tool" as const, content: `Error executing tool: ${err?.message || err}` }
+              return toolResultMessage(toolCall, `Error executing tool: ${err?.message || err}`)
             }
           })
         )
@@ -209,8 +196,8 @@ export async function askPi(chatId: number, message: string) {
           })
         }
       } else {
-        debug("Ollama", `Final assistant message length: ${assistantMessage.content?.length ?? 0}`)
-        replyText = assistantMessage.content?.trim() ?? "No he podido generar una respuesta."
+        debug("Ollama", `Final assistant message length: ${assistantContent.length}`)
+        replyText = assistantContent.trim() || "No he podido generar una respuesta."
 
         await memoryManager.addConversationMessage(chatId, {
           role: "assistant",

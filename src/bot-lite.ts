@@ -4,8 +4,10 @@ import { appendFile, unlink, writeFile, mkdir } from "node:fs/promises"
 import { join } from "node:path"
 import { approvalMessage, sttDisabledMessage, hasApproval, needsApproval } from "./approvals.js"
 import { saveTelegramPhoto, saveTelegramFile } from "./telegram-files.js"
-import { telegramToken, telegramChatId, uploadsDir, ollamaUrl, ollamaModel, agentDir, timezone, voiceboxEnabled, telegramSendVoiceDefault, sttEnabled, sttLocalEnabled, maraUserName } from "./config.js"
+import { telegramToken, telegramChatId, uploadsDir, agentDir, timezone, voiceboxEnabled, telegramSendVoiceDefault, sttEnabled, sttLocalEnabled, maraUserName } from "./config.js"
 import { askPiWithRetry, clearChatHistory, cancelRequest } from "./ollama.js"
+import { getActiveLlm } from "./providers.js"
+import { isOpenAiApi, llmBaseUrl, llmHeaders, llmModelsEndpoint } from "./ollama-http.js"
 import { readContextFile } from "./cache.js"
 import { info, error as logError, warn } from "./logger.js"
 import { generateVoice, transcribeAudio } from "./voicebox.js"
@@ -451,14 +453,13 @@ async function start() {
   registerCommandHandler()
   registerAudioHandler()
 
-  info("Bot", `Ollama: ${ollamaUrl} | Model: ${ollamaModel}`)
+  info("Bot", `Inference: ${llmBaseUrl()} | Model: ${getActiveLlm().model}`)
   try {
-    const res = await fetch(`${ollamaUrl}/api/version`, { signal: AbortSignal.timeout(5000) })
+    const res = await fetch(llmModelsEndpoint(), { headers: llmHeaders(), signal: AbortSignal.timeout(5000) })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const data = await res.json() as { version: string }
-    info("Ollama", `Ping OK — v${data.version}`)
+    info("Ollama", `Ping OK — ${isOpenAiApi() ? "API OpenAI-compatible" : "Ollama"}`)
   } catch {
-    warn("Ollama", `No responde en ${ollamaUrl}. El bot arrancará pero las consultas fallarán.`)
+    warn("Ollama", `No responde en ${llmBaseUrl()}. El bot arrancará pero las consultas fallarán.`)
     setState("offline")
   }
 

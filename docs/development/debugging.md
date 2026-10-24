@@ -91,5 +91,9 @@ Los servidores HTTP (calendar, notes) apuntan a un servicio n8n externo. Si no e
 
 ## Memoria
 
-- Si conectaste un servidor MCP de memoria (decláralo en `MCP_MEMORY_SERVERS`): `[Memory] Memory mode: MCP memory server`
-- Por defecto: `[Memory] Memory mode: SQLite (data/mara.db)`
+- Con Hindsight activo: `[Memory] Memory mode: Hindsight (banco mara-os) + SQLite local`
+- Sin Hindsight: `[Memory] Memory mode: SQLite (data/mara.db)`
+- Si además declaras un MCP de memoria en `MCP_MEMORY_SERVERS`, se avisa de que
+  Hindsight sigue siendo la fuente principal y el MCP queda como tool manual.
+- Fallo de Hindsight: `[Hindsight] No disponible en ...; se usará SQLite como respaldo`.
+  Los cambios quedan en la outbox (`memory_sync`) y se reintentan solos.

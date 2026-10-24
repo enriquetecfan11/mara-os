@@ -54,12 +54,12 @@ Mara OS es un asistente personal que conecta Telegram, un LLM local (Ollama) y s
 | Bot | grammy (TypeScript) |
 | LLM | Ollama (modelo local) |
 | Conexión MCP | @modelcontextprotocol/sdk |
-| Memoria | SQLite (data/mara.db) + MEMORY.md |
+| Memoria | Hindsight (largo plazo) + SQLite (historial, espejo y respaldo) |
 | Servidores MCP | 3 (macOS, Calendar, Notes) |
 
 ## Optimaciones
 
-- **Caché de archivos**: Los contextos (SOUL, USER, AGENTS, SYSTEM, MEMORY) se cachean por mtime. Reduce 40-60ms → ~1ms por request.
+- **Caché de archivos**: Los contextos (SOUL, USER, AGENTS, SYSTEM) se cachean por mtime. Reduce 40-60ms → ~1ms por request.
 - **Ejecución paralela de tools**: Múltiples tool_calls se ejecutan concurrentemente con Promise.all().
 - **Timeout**: 30s en requests a Ollama para evitar hangs.
 - **Retry**: Backoff exponencial (1s, 2s, 4s) para fallos transitorios.

@@ -1,15 +1,36 @@
-// Comprobación completa del backend de Ollama antes de arrancar Mara OS.
-// Verifica, en orden: conectividad, que el modelo existe y que responde a
-// chat y a tool calling (el bot depende del tool calling para los MCP).
-//
-// Uso:  pnpm check:ollama
-// Sale con código 0 si todo va bien, 1 si algo falla.
+/**
+ * Diagnóstico del servidor de inferencia.
+ *
+ * Comprueba, en el mismo orden que necesita el bot:
+ *   1. Conectividad (y auth, si hay API key).
+ *   2. Que el modelo configurado existe en el servidor.
+ *   3. Que responde texto.
+ *   4. Que hace tool calling (imprescindible para los MCP).
+ *
+ * Habla el dialecto que diga `OLLAMA_API`:
+ *   - "ollama" (por defecto): /api/tags y /api/chat.
+ *   - "openai": /v1/models y /v1/chat/completions.
+ *
+ * Uso:  pnpm check:ollama
+ * Sale con código 0 si todo va bien, 1 si algo falla.
+ */
 
-import { ollamaUrl, ollamaModel } from "../src/config.js"
-import { ollamaOptions, readOllamaError } from "../src/ollama-http.js"
+import { getActiveLlm } from "../src/providers.js"
+import {
+  isOpenAiApi,
+  llmBaseUrl,
+  llmChatBody,
+  llmChatEndpoint,
+  llmHeaders,
+  llmModelsEndpoint,
+  parseLlmChat,
+  readLlmError,
+} from "../src/ollama-http.js"
+
+/** Proveedor activo: el guardado por `/modelo` o el de `LLM_PROVIDER`. */
+const llm = getActiveLlm()
 
 const TIMEOUT_PING_MS = 5_000
-const TIMEOUT_MODELS_MS = 10_000
 const TIMEOUT_CHAT_MS = 120_000
 
 const RESET = "\x1b[0m"
@@ -19,6 +40,7 @@ const RED = "\x1b[31m"
 const GRAY = "\x1b[90m"
 
 let failures = 0
+let serverModels: string[] = []
 
 function ok(label: string, detail = ""): void {
   const suffix = detail ? ` ${GRAY}${detail}${RESET}` : ""
@@ -36,84 +58,100 @@ function infoLine(label: string, detail = ""): void {
   console.log(`${GRAY}·${RESET} ${label}${suffix}`)
 }
 
-async function checkVersion(): Promise<boolean> {
+async function checkConnectivity(): Promise<boolean> {
   try {
-    const res = await fetch(`${ollamaUrl}/api/version`, {
+    const res = await fetch(llmModelsEndpoint(), {
+      headers: llmHeaders(),
       signal: AbortSignal.timeout(TIMEOUT_PING_MS),
     })
+
     if (!res.ok) {
-      ko("Conectividad", `${ollamaUrl} respondió HTTP ${res.status}`)
+      ko("Conectividad", `${llmBaseUrl()} respondió HTTP ${res.status} — ${await readLlmError(res)}`)
+      if (res.status === 401 || res.status === 403) {
+        const keyVar = llm.provider === "groq" ? "GROQ_API_KEY" : "OLLAMA_API_KEY"
+        console.log(`  ${GRAY}El servidor pide autenticación: define ${keyVar} en el .env (o LLM_API_KEY).${RESET}`)
+      }
       return false
     }
-    const data = (await res.json()) as { version?: string }
-    ok("Conectividad", `${ollamaUrl} (Ollama ${data.version ?? "desconocida"})`)
+
+    const data = (await res.json()) as any
+    serverModels = isOpenAiApi()
+      ? (data.data ?? []).map((m: any) => String(m.id ?? "")).filter(Boolean)
+      : (data.models ?? []).map((m: any) => String(m.name ?? m.model ?? "")).filter(Boolean)
+
+    let apiLabel = "API OpenAI-compatible"
+    if (!isOpenAiApi()) {
+      let version = "desconocida"
+      try {
+        const v = await fetch(`${llmBaseUrl()}/api/version`, { signal: AbortSignal.timeout(TIMEOUT_PING_MS) })
+        if (v.ok) version = ((await v.json()) as { version?: string }).version ?? version
+      } catch {
+        /* la versión es informativa, no bloquea */
+      }
+      apiLabel = `Ollama ${version}`
+    }
+
+    ok("Conectividad", `${llmBaseUrl()} (${apiLabel}${llm.apiKey ? ", auth OK" : ""})`)
     return true
   } catch (err) {
-    ko("Conectividad", `no responde en ${ollamaUrl} — ${(err as Error).message}`)
-    console.log(`  ${GRAY}¿Está el servidor Ollama levantado y accesible en red?${RESET}`)
+    ko("Conectividad", `no responde en ${llmBaseUrl()} — ${(err as Error).message}`)
+    console.log(`  ${GRAY}¿Está el servidor de inferencia levantado y accesible en red?${RESET}`)
     return false
   }
 }
 
 async function checkModelPresent(): Promise<boolean> {
-  let names: string[] = []
-  try {
-    const res = await fetch(`${ollamaUrl}/api/tags`, {
-      signal: AbortSignal.timeout(TIMEOUT_MODELS_MS),
-    })
-    if (!res.ok) {
-      ko("Lista de modelos", `HTTP ${res.status}`)
-      return false
-    }
-    const data = (await res.json()) as { models?: Array<{ name?: string; model?: string }> }
-    names = (data.models ?? []).map((m) => m.name ?? m.model ?? "").filter(Boolean)
-  } catch (err) {
-    ko("Lista de modelos", `error consultando /api/tags — ${(err as Error).message}`)
+  if (serverModels.length === 0) {
+    ko("Modelo disponible", "el servidor no devolvió ningún modelo")
     return false
   }
 
-  const found = names.some((n) => n === ollamaModel || n === `${ollamaModel}:latest`)
+  // En servidores OpenAI-compatibles el id puede llevar el quant detrás de ":"
+  // (ej. "unsloth/Qwen3.5-4B-MTP-GGUF:UD-Q4_K_XL").
+  const found = serverModels.some(
+    (n) => n === llm.model || n === `${llm.model}:latest` || (isOpenAiApi() && n.startsWith(`${llm.model}:`)),
+  )
+
   if (found) {
-    ok("Modelo disponible", `${ollamaModel} (${names.length} modelo(s) en el servidor)`)
+    ok("Modelo disponible", `${llm.model} (${serverModels.length} modelo(s) en el servidor)`)
     return true
   }
 
-  ko("Modelo disponible", `"${ollamaModel}" no está en el servidor`)
-  console.log(`  ${GRAY}Modelos encontrados: ${names.join(", ") || "(ninguno)"}${RESET}`)
-  console.log(`  ${GRAY}Descárgalo en el servidor con: ollama pull ${ollamaModel}${RESET}`)
+  ko("Modelo disponible", `"${llm.model}" no está en el servidor`)
+  console.log(`  ${GRAY}Modelos encontrados: ${serverModels.join(", ")}${RESET}`)
+  if (llm.provider === "ollama") {
+    console.log(`  ${GRAY}Descárgalo en el servidor con: ollama pull ${llm.model}${RESET}`)
+  } else if (llm.provider === "groq") {
+    console.log(`  ${GRAY}Comprueba el id exacto en https://console.groq.com/docs/models${RESET}`)
+  }
   return false
 }
 
-interface ChatResponse {
-  message?: {
-    content?: string
-    tool_calls?: Array<{ function?: { name?: string; arguments?: unknown } }>
-  }
-  error?: string
-}
-
-async function chat(body: Record<string, unknown>): Promise<{ data: ChatResponse; ms: number }> {
+async function chat(body: Record<string, unknown>): Promise<{ content: string; toolCalls: ReturnType<typeof parseLlmChat>["toolCalls"]; ms: number }> {
   const t0 = Date.now()
-  const res = await fetch(`${ollamaUrl}/api/chat`, {
+  const res = await fetch(llmChatEndpoint(), {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: llmHeaders(true),
     signal: AbortSignal.timeout(TIMEOUT_CHAT_MS),
-    body: JSON.stringify({ model: ollamaModel, stream: false, options: ollamaOptions(), ...body }),
+    body: JSON.stringify(body),
   })
   const ms = Date.now() - t0
   if (!res.ok) {
-    throw new Error(await readOllamaError(res))
+    throw new Error(await readLlmError(res))
   }
-  return { data: (await res.json()) as ChatResponse, ms }
+  const parsed = parseLlmChat(await res.json())
+  return { ...parsed, ms }
 }
 
 async function checkTextReply(): Promise<boolean> {
   try {
-    const { data, ms } = await chat({
-      messages: [{ role: "user", content: "Responde solo con la palabra: listo" }],
-      temperature: 0.3,
-    })
-    const text = data.message?.content?.trim() ?? ""
+    const { content, ms } = await chat(
+      llmChatBody({
+        messages: [{ role: "user", content: "Responde solo con la palabra: listo" }],
+        temperature: 0.3,
+      }),
+    )
+    const text = content.trim()
     if (!text) {
       ko("Respuesta de texto", "el modelo devolvió contenido vacío")
       return false
@@ -143,20 +181,23 @@ async function checkToolCalling(): Promise<boolean> {
   ]
 
   try {
-    const { data, ms } = await chat({
-      messages: [{ role: "user", content: "¿Qué hora es en Madrid? Usa la herramienta." }],
-      tools,
-      tool_choice: "required",
-      temperature: 0.3,
-    })
-    const calls = data.message?.tool_calls ?? []
-    if (calls.length === 0) {
+    const { toolCalls, ms } = await chat(
+      llmChatBody({
+        messages: [{ role: "user", content: "¿Qué hora es en Madrid? Usa la herramienta." }],
+        tools,
+        temperature: 0.3,
+        requireTool: true,
+      }),
+    )
+
+    if (toolCalls.length === 0) {
       ko("Tool calling", "el modelo respondió sin tool_calls")
       console.log(`  ${GRAY}El bot necesita tool calling para usar los MCP (calendar, notes…).${RESET}`)
       return false
     }
-    const name = calls[0]?.function?.name ?? "(sin nombre)"
-    ok("Tool calling", `${ms} ms · llamó a "${name}"${calls.length > 1 ? ` (+${calls.length - 1} más)` : ""}`)
+
+    const name = toolCalls[0]?.name ?? "(sin nombre)"
+    ok("Tool calling", `${ms} ms · llamó a "${name}"${toolCalls.length > 1 ? ` (+${toolCalls.length - 1} más)` : ""}`)
     return true
   } catch (err) {
     ko("Tool calling", `error — ${(err as Error).message}`)
@@ -165,12 +206,15 @@ async function checkToolCalling(): Promise<boolean> {
 }
 
 async function main(): Promise<void> {
-  console.log(`${BOLD}Comprobando Ollama${RESET}`)
-  infoLine("URL", ollamaUrl)
-  infoLine("Modelo", ollamaModel)
+  console.log(`${BOLD}Comprobando servidor de inferencia${RESET}`)
+  infoLine("Proveedor", llm.provider)
+  infoLine("Dialecto", llm.dialect === "openai" ? "openai (/v1/chat/completions)" : "ollama (/api/chat)")
+  infoLine("URL", llmBaseUrl())
+  infoLine("Modelo", llm.model)
+  infoLine("API key", llm.apiKey ? "configurada" : "(ninguna)")
   console.log()
 
-  const reachable = await checkVersion()
+  const reachable = await checkConnectivity()
   if (!reachable) {
     finish()
     return
@@ -193,7 +237,7 @@ async function main(): Promise<void> {
 function finish(): void {
   console.log()
   if (failures === 0) {
-    console.log(`${GREEN}${BOLD}OK — Ollama está listo para Mara OS.${RESET}`)
+    console.log(`${GREEN}${BOLD}OK — el servidor está listo para Mara OS.${RESET}`)
     process.exit(0)
   }
   console.log(`${RED}${BOLD}KO — ${failures} comprobación(es) fallida(s).${RESET}`)

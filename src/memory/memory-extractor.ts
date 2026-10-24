@@ -1,8 +1,24 @@
-import { ollamaUrl, ollamaModel } from "../config.js"
+import { memoryMinImportance, memoryExtractionMinIntervalMs } from "../config.js"
 import { MemoryManager } from "./memory-manager.js"
-import { ExtractionResult, ExtractedMemory, MemoryType } from "./types.js"
+import { ExtractionResult, ExtractedMemory, MemoryType, NewMemoryEntry } from "./types.js"
 import { info, debug, error as logError, warn } from "../logger.js"
-import { ollamaOptions, readOllamaError } from "../ollama-http.js"
+import { llmChatBody, llmChatEndpoint, llmHeaders, parseLlmChat, readLlmError } from "../ollama-http.js"
+
+/** Máximo de hechos guardados por conversación analizada. */
+const MAX_MEMORIES_PER_RUN = 5
+
+/**
+ * Tope de la llamada de extracción. Corre en segundo plano: si el servidor de
+ * inferencia se atasca, no debe quedar una petición colgada indefinidamente.
+ */
+const EXTRACTION_TIMEOUT_MS = 60_000
+
+/**
+ * Última extracción por chat. Evita lanzar una llamada al LLM por cada
+ * mensaje: en una ráfaga de mensajes solo se analiza la conversación una vez
+ * cada MEMORY_EXTRACTION_MIN_INTERVAL_MS.
+ */
+const lastExtractionAt = new Map<number, number>()
 
 const EXTRACTION_PROMPT = `Eres un extractor de memoria para un asistente personal. Analiza la conversación y extrae SOLO información que sea útil recordar a largo plazo.
 
@@ -48,25 +64,26 @@ function buildExtractionPrompt(conversation: string): string {
 }
 
 async function callOllamaForExtraction(prompt: string): Promise<string> {
-  const response = await fetch(`${ollamaUrl}/api/generate`, {
+  const response = await fetch(llmChatEndpoint(), {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: ollamaModel,
-      prompt,
-      stream: false,
-      temperature: 0.1,
-      format: "json",
-      options: ollamaOptions(),
-    }),
+    headers: llmHeaders(true),
+    body: JSON.stringify(
+      llmChatBody({
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.1,
+        // Presupuesto corto: son como mucho 5 hechos en JSON.
+        maxTokens: 1024,
+        json: true,
+      }),
+    ),
+    signal: AbortSignal.timeout(EXTRACTION_TIMEOUT_MS),
   })
 
   if (!response.ok) {
-    throw new Error(await readOllamaError(response))
+    throw new Error(await readLlmError(response))
   }
 
-  const data = await response.json()
-  return data.response
+  return parseLlmChat(await response.json()).content
 }
 
 export async function extractMemories(
@@ -75,6 +92,19 @@ export async function extractMemories(
   userMessage: string,
   assistantMessage: string
 ): Promise<void> {
+  if (memoryExtractionMinIntervalMs > 0) {
+    const last = lastExtractionAt.get(chatId) ?? 0
+    const elapsed = Date.now() - last
+    if (elapsed < memoryExtractionMinIntervalMs) {
+      debug(
+        "MemoryExtractor",
+        `Extracción omitida para ${chatId}: ${memoryExtractionMinIntervalMs - elapsed}ms hasta la siguiente`,
+      )
+      return
+    }
+    lastExtractionAt.set(chatId, Date.now())
+  }
+
   try {
     const recentMessages = await memoryManager.getRecentConversation(chatId, 4000)
     const conversationText = recentMessages
@@ -97,21 +127,34 @@ export async function extractMemories(
       return
     }
 
-    for (const mem of result.memories) {
-      if (!isValidMemory(mem)) continue
+    const now = Date.now()
+    const candidates = result.memories
+      .filter((mem) => isValidMemory(mem))
+      // Solo lo suficientemente relevante: no memorizamos charla circunstancial.
+      .filter((mem) => mem.importance >= memoryMinImportance)
+      .slice(0, MAX_MEMORIES_PER_RUN)
 
-      try {
-        await memoryManager.remember(
-          mem.content,
-          mem.type,
-          Math.max(0.1, Math.min(1, mem.importance)),
-          "conversation",
-          { extractedFrom: chatId, extractedAt: Date.now() }
-        )
+    if (candidates.length === 0) {
+      debug("MemoryExtractor", `No memories above importance ${memoryMinImportance}`)
+      return
+    }
+
+    const entries: NewMemoryEntry[] = candidates.map((mem) => ({
+      content: mem.content.trim(),
+      type: mem.type,
+      importance: Math.max(0.1, Math.min(1, mem.importance)),
+      source: "conversation",
+      metadata: { extractedFrom: chatId, extractedAt: now },
+    }))
+
+    try {
+      const saved = await memoryManager.rememberMany(entries)
+      debug("MemoryExtractor", `Stored ${saved.length}/${candidates.length} memories (batch)`)
+      for (const mem of candidates) {
         debug("MemoryExtractor", `Extracted: ${mem.content.slice(0, 50)}... (${mem.type}, ${mem.importance})`)
-      } catch (err) {
-        warn("MemoryExtractor", `Failed to store extracted memory: ${err}`)
       }
+    } catch (err) {
+      warn("MemoryExtractor", `Failed to store extracted memories: ${err}`)
     }
   } catch (err) {
     logError("MemoryExtractor", `Extraction failed: ${err}`)

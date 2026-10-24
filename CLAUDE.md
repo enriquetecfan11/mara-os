@@ -21,6 +21,8 @@ The flow for each user message is:
 ```bash
 pnpm bot              # Run the bot locally with .env variables
 pnpm typecheck        # Check TypeScript without building
+pnpm test             # Memory tests (Node test runner + fake Hindsight server)
+pnpm check:hindsight  # Read-only Hindsight health/bank/recall check
 pnpm reset-bot        # Clear chat memory (empties MEMORY.md)
 pnpm reset-memory     # Restore MEMORY.md to git state
 ```
@@ -35,11 +37,13 @@ pnpm reset-memory     # Restore MEMORY.md to git state
   - Timestamps in HH:MM:SS format; output: `[14:32:55] [INFO] [Module] message`
   - Log level filtering via `LOG_LEVEL` env var (default: "info"). Set `LOG_LEVEL=debug` to see all logs
 
-- **cache.ts**: Mtime-based file caching for context files (SOUL, USER, AGENTS, SYSTEM, MEMORY).
+- **cache.ts**: Mtime-based file caching for context files (SOUL, USER, AGENTS, SYSTEM).
   - `readContextFile()`: Reads file from disk once, caches in memory. On subsequent reads, checks mtime; if unchanged, returns cached content. Automatically invalidates when file changes.
   - Reduces per-request latency: 40-60ms (5 file reads) → 1ms (cache hits)
 
-- **bot.ts**: Telegram bot handler. Commands: `/start`, `/help`, `/status`, `/reset`, `/skill`. `/start` and `/help` render the shared long welcome message built in `welcome.ts` (live system status + states + command catalogue). Message handler orchestrates approval checks and calls to `askPi()`.
+- **bot.ts**: Telegram bot handler. Commands: `/start`, `/help`, `/status`, `/modelo`, `/reset`, `/skill`. `/start` and `/help` render the shared long welcome message built in `welcome.ts` (live system status + states + command catalogue). `/modelo [proveedor]` lists the inference providers or switches the active one at runtime (pings the candidate first). Message handler orchestrates approval checks and calls to `askPi()`.
+
+- **providers.ts**: runtime inference provider state. `getActiveLlm()` (stored choice → `LLM_PROVIDER` → derived from `OLLAMA_API`), `setActiveProvider()` (validates config, resolves and persists to `data/llm-provider.json`), `listProviderStatus()` (for `/modelo`).
   - **Graceful shutdown**: Listens for SIGINT (Ctrl+C) and SIGTERM signals. Closes MCP clients cleanly (prevents unhandled errors from child processes), then stops bot without errors.
   - **Voice/audio input**: `message:voice` and `message:audio` handlers download the file to a temp path, transcribe it (`handleIncomingAudio()`), feed the transcript through the normal agent flow (same as a typed message, including approval checks), then delete the temp file. On transcription failure it replies with a short error and does not crash.
   - **Reply modality (`deliverReply()`)**: the text reply is **always** sent first (immediate); a voice reply is added on top when `wantVoiceFor()` says so — by default only for voice/audio input (`/voz on|off` per-chat override wins, else `TELEGRAM_SEND_VOICE=true` forces global voice-on, else mirror the input). Voice output goes through Voicebox TTS and is transcoded WAV→OGG/Opus (`src/audio.ts:wavToOggOpus`, ffmpeg) so it arrives as a real Telegram **voice note** (`replyWithVoice`); falls back to `replyWithAudio` WAV if ffmpeg/opus is unavailable, and is skipped for replies >500 chars. `trySendVoice()` shows a `record_voice` chat action while generating.
@@ -63,7 +67,17 @@ pnpm reset-memory     # Restore MEMORY.md to git state
   - `initMcpClients()`: Reads `mcp.json`, connects to **all servers in parallel** (Promise.allSettled) with a **15s timeout per server** (Promise.race + AbortSignal.timeout). Bot starts even if servers are unreachable. HTTP transports get `AbortSignal.timeout` on requestInit.
   - `callMcpTool()`: Looks up client from `toolToClientMap`, calls tool, extracts text from MCP response.
   - `closeMcpClients()`: Gracefully disconnects all MCP servers (used on SIGINT/SIGTERM). Prevents unhandled errors from child processes.
-  - `hasMemoryServer`: Flag indicating whether one of the MCP servers declared in `MCP_MEMORY_SERVERS` connected. Empty by default, so memory always runs on SQLite.
+  - `hasMemoryServer`: Flag indicating whether one of the MCP servers declared in `MCP_MEMORY_SERVERS` connected. Empty by default. With Hindsight enabled, an MCP memory server is only a manual tool, never the `MemoryManager` backend.
+
+- **memory/**: Long-term memory subsystem.
+  - `memory-manager.ts`: Single public API (`remember`, `rememberMany`, `search`, `forget`, `list`, `get`) and backend selection: `custom` factory > `hindsight` (when `HINDSIGHT_ENABLED=true`) > `sqlite`.
+  - `conversation-store.ts`: SQLite conversation history (short term). Unaffected by Hindsight.
+  - `memory-extractor.ts`: Background LLM extraction after each reply. Filters by `MEMORY_MIN_IMPORTANCE`, debounces per chat (`MEMORY_EXTRACTION_MIN_INTERVAL_MS`), batches into one `retain`.
+  - `context-builder.ts`: Builds the system prompt and injects top-5 memories into `{{MEMORY}}`.
+  - `stores/sqlite.ts`: FTS5 backend, dedupe, soft-forget tombstones.
+  - `stores/hindsight.ts`: REST adapter (retain/recall/list/get/PATCH invalidate) with timeouts, optional Bearer auth and a 30s circuit breaker. Never calls the bank-wide DELETE.
+  - `stores/resilient.ts`: Composes Hindsight + SQLite + outbox. Writes locally first, retains with stable `document_id = mara-<localId>`, retries failures.
+  - `sync-queue.ts`: Persistent `memory_sync` outbox with exponential backoff and permanent-failure handling.
 
 - **events.ts**: WebSocket "brain" server for Mara UI (protocolo de eventos v1).
   - `startUiEvents()`: Listens on `MARA_BRAIN_WS_URL` (empty = disabled). Non-blocking; accepts new connections anytime.
@@ -96,7 +110,7 @@ pnpm reset-memory     # Restore MEMORY.md to git state
 
 - **AGENTS.md**: Operational rules (e.g., formatting constraints for Telegram, memory management policies, security boundaries).
 
-- **MEMORY.md**: Persistent memory file used as fallback when no MCP memory server is available. Lightweight durable facts.
+- **MEMORY.md**: Legacy static memory file. Dynamic memories live in Hindsight (mirrored in SQLite) and are injected into `{{MEMORY}}` via `MemoryManager.search()`. Not auto-migrated while Hindsight is enabled.
 
 - **skills/**: Directory of skill markdown files (e.g., `calendario.md`, `notas.md`, `automatizacion.md`, `memoria.md`). Each defines keywords and tool usage instructions for that domain.
 
@@ -104,23 +118,38 @@ pnpm reset-memory     # Restore MEMORY.md to git state
 
 - **mcp.json**: Array of MCP server configs (name, type: "http" or "stdio", url or command, args, env).
   
-- **.env**: Runtime variables — `TELEGRAM_TOKEN`, `OLLAMA_URL`, `OLLAMA_MODEL`, `TIMEZONE`, voice output (`VOICEBOX_URL`, `VOICEBOX_ENABLED`, `VOICEBOX_PROFILE`, `TELEGRAM_SEND_VOICE`), and voice input / STT (`STT_LOCAL_ENABLED`, `STT_MODEL`, `STT_LANGUAGE`, `STT_TIMEOUT_MS`), plus the startup welcome flag (`STARTUP_WELCOME`). Model defaults to `ornith-1.5:9b` (9B parameter size, reliable tool-calling). Full table in `docs/configuration/environment.md`. Ignored by git.
+- **.env**: Runtime variables — `TELEGRAM_TOKEN`, `OLLAMA_API`, `OLLAMA_URL`, `OLLAMA_MODEL`, `OLLAMA_API_KEY`, `TIMEZONE`, voice output (`VOICEBOX_URL`, `VOICEBOX_ENABLED`, `VOICEBOX_PROFILE`, `TELEGRAM_SEND_VOICE`), and voice input / STT (`STT_LOCAL_ENABLED`, `STT_MODEL`, `STT_LANGUAGE`, `STT_TIMEOUT_MS`), plus the startup welcome flag (`STARTUP_WELCOME`). Model defaults to `ornith-1.5:9b` (9B parameter size, reliable tool-calling). Full table in `docs/configuration/environment.md`. Ignored by git.
 
-## Ollama Integration Details
+## Inference Server Integration Details
 
-**Request format** (src/ollama.ts:84-97):
-- `model`, `messages` (system + history), `stream: false`, `tools`, `tool_choice: "required"`, `temperature: 0.3`
-- Tools passed as `{ type: "function", function: { name, description, parameters } }` — OpenAI-compatible schema
+**Providers** (`src/config.ts` + `src/providers.ts`). `LLM_PROVIDER` is only the *initial* provider; the active one is runtime state changed by `/modelo` and persisted to `data/llm-provider.json` (`LLM_STATE_FILE`). `resolveLlmProvider(name)` returns the `ActiveLlm` (`url` / `model` / `apiKey` / `dialect` / `maxTokens`), and every `ollama-http.ts` helper takes an optional `ActiveLlm` — default `getActiveLlm()`:
+- `unsloth` — Unsloth Studio on the LAN, from `OLLAMA_URL` / `OLLAMA_MODEL` / `OLLAMA_API_KEY`.
+- `groq` — Groq Cloud, from `GROQ_API_URL` (default `https://api.groq.com/openai`) / `GROQ_MODEL` / `GROQ_API_KEY`.
+- `ollama` — native Ollama on the LAN, same `OLLAMA_*` vars.
+- `openai` — any other OpenAI-compatible server; requires `LLM_API_URL`.
+- Unset: derived from `OLLAMA_API` (`openai` → `unsloth`, else `ollama`), i.e. the pre-provider behaviour.
+- `LLM_API_URL` / `LLM_MODEL` / `LLM_API_KEY` / `LLM_MAX_TOKENS` override whatever the provider resolved. Never read `OLLAMA_*` outside `src/config.ts`.
 
-**Response parsing** (src/ollama.ts:102-182):
-- Response includes `message.content` (text) and optional `message.tool_calls` array.
-- If `tool_calls` present and length > 0, loop through each, call `callMcpTool()`, append result as `role: "tool"` message, continue loop.
-- If no tool_calls, return `content` as final answer to Telegram.
+**Two dialects, one client** (`src/ollama-http.ts`). `isOpenAiApi(llm)` / `llm.dialect` picks it:
+- `ollama`: `POST {url}/api/chat`, health `GET /api/tags`.
+- `openai`: `POST {url}/v1/chat/completions`, health `GET /v1/models`. This covers Groq, Unsloth Studio, vLLM, llama.cpp server and LM Studio.
+- `llm.apiKey` adds `Authorization: Bearer <key>` to every request.
+
+**Request format** (`llmChatBody()` in `src/ollama-http.ts`):
+- `model`, `messages` (system + history), `stream: false`, `tools`, `temperature: 0.3`
+- Tools passed as `{ type: "function", function: { name, description, parameters } }` — identical in both dialects
+- `tool_choice`: `"required"` in dialect `ollama` (when `requireTool`), `"auto"` in dialect `openai` — `"required"` would force a tool call even in normal chat
+- `options: { num_ctx }` only in dialect `ollama`; `max_tokens` / `response_format: { type: "json_object" }` only in `openai`
+
+**Response parsing** (`parseLlmChat()` in `src/ollama-http.ts`):
+- Normalizes `message.content` / `message.tool_calls` (ollama) and `choices[0].message.content` / `.tool_calls` (openai) into `{ content, toolCalls }`.
+- Assistant messages with `tool_calls` go back into the history via `assistantToolCallMessage()`, and each result via `toolResultMessage()` (adds `tool_call_id`). The OpenAI dialect returns 400 without this pairing.
+- If `tool_calls` present and length > 0, loop through each, call `callMcpTool()`, append result, continue loop. Otherwise return `content` as the final answer.
 
 **Key constraints**:
 - History capped at 20 messages per chat ID (lines 44–45, 123–124)
 - System prompt language enforcement: **"Responde SIEMPRE en español, NUNCA en inglés"** must stay at the top
-- `temperature: 0.3` reduces non-determinism for small quantized models; `tool_choice: "required"` forces tool-calling when tools are available
+- `temperature: 0.3` reduces non-determinism for small quantized models
 
 ## Common Tasks
 
@@ -137,7 +166,8 @@ pnpm reset-memory     # Restore MEMORY.md to git state
 
 ### Updating System Prompt / Context
 - Edit `SYSTEM.md` (template) for structure or language enforcement
-- Edit `SOUL.md`, `USER.md`, `AGENTS.md`, or `MEMORY.md` to change personality, user info, rules, or facts
+- Edit `SOUL.md`, `USER.md`, `AGENTS.md` to change personality, user info, or rules
+- `MEMORY.md` is legacy/static; do not add dynamic memories there (use `/memory` or let the extractor work)
 - No bot restart needed; files are read fresh on each message
 
 ### Debugging Tool-Calling Issues

@@ -7,6 +7,8 @@
 | `/start` | Limpia el historial y muestra el mensaje de bienvenida completo (estado del sistema + estados + comandos) | `bot.ts:208` |
 | `/help` | Muestra el mismo mensaje de bienvenida completo | `bot.ts:219` |
 | `/status` | Muestra estado del sistema (fecha, modelo, archivos de contexto, skills) | `bot.ts:130` |
+| `/modelo` | Estado de los proveedores de inferencia y cuál está activo | `bot.ts` |
+| `/modelo <proveedor>` | Prueba que responde y activa `unsloth`, `groq`, `ollama` u `openai` en caliente | `bot.ts` |
 | `/context` | Muestra un resumen estructurado del contexto de ejecución actual | `bot.ts:223` |
 | `/reset` | Limpia el historial de conversación del chat actual | `bot.ts:73` |
 | `/cancel` | Cancela la operación en curso (aborta request a Ollama) | `bot.ts:202` |
@@ -23,7 +25,7 @@
 |---|---|
 | `pnpm bot` | Iniciar el bot |
 | `pnpm bot:lite` | Iniciar el bot en variante ligera |
-| `pnpm check:ollama` | Comprobar conectividad, modelo y tool calling de Ollama |
+| `pnpm check:llm` | Comprobar conectividad, modelo y tool calling del proveedor activo |
 | `pnpm typecheck` | Verificar tipos TypeScript |
 | `pnpm reset-bot` | Vaciar MEMORY.md |
 | `pnpm reset-memory` | Restaurar MEMORY.md de git |

@@ -1,10 +1,33 @@
 import { join } from "node:path"
 import { existsSync, mkdirSync } from "node:fs"
-import { MemoryStore, MemoryEntry, MemoryType, SearchOptions, SearchResult, ConversationStore } from "./types.js"
+import {
+  MemoryStore,
+  MemoryEntry,
+  MemoryType,
+  NewMemoryEntry,
+  SearchOptions,
+  SearchResult,
+  ConversationStore,
+} from "./types.js"
 import { createSqliteMemoryStore } from "./stores/sqlite.js"
+import { createHindsightMemoryStore } from "./stores/hindsight.js"
+import { createResilientMemoryStore, ResilientMemoryStore } from "./stores/resilient.js"
+import { MemorySyncQueue } from "./sync-queue.js"
 import { createConversationStore } from "./conversation-store.js"
 import { info, debug, error as logError, warn } from "../logger.js"
-import { agentDir } from "../config.js"
+import {
+  agentDir,
+  hindsightEnabled,
+  hindsightApiUrl,
+  hindsightBankId,
+  hindsightApiKey,
+  hindsightTenant,
+  hindsightTimeoutMs,
+  hindsightRetainTimeoutMs,
+  hindsightHealthTimeoutMs,
+  hindsightSyncBatchSize,
+  hindsightSyncIntervalMs,
+} from "../config.js"
 
 const DEFAULT_DB_PATH = join(agentDir, "..", "data", "mara.db")
 const PROD_DB_PATH = "/var/lib/mara/memory/mara.db"
@@ -42,10 +65,37 @@ export class MemoryManager {
   private store: MemoryStore
   private conversationStore: ConversationStore
   private initialized = false
+  private backend: "sqlite" | "hindsight" | "custom"
 
   constructor() {
-    this.store = storeFactory ? storeFactory() : createSqliteMemoryStore(getDbPath())
-    this.conversationStore = createConversationStore(getDbPath())
+    const dbPath = getDbPath()
+    if (storeFactory) {
+      this.store = storeFactory()
+      this.backend = "custom"
+    } else if (hindsightEnabled) {
+      // Hindsight primario + SQLite como espejo local y respaldo. Compartimos
+      // el mismo fichero (data/mara.db) para historial y memoria.
+      this.store = createResilientMemoryStore({
+        hindsight: createHindsightMemoryStore({
+          apiUrl: hindsightApiUrl,
+          bankId: hindsightBankId,
+          apiKey: hindsightApiKey,
+          tenant: hindsightTenant,
+          timeoutMs: hindsightTimeoutMs,
+          retainTimeoutMs: hindsightRetainTimeoutMs,
+          healthTimeoutMs: hindsightHealthTimeoutMs,
+        }),
+        sqlite: createSqliteMemoryStore(dbPath),
+        queue: new MemorySyncQueue(dbPath),
+        syncBatchSize: hindsightSyncBatchSize,
+        syncIntervalMs: hindsightSyncIntervalMs,
+      })
+      this.backend = "hindsight"
+    } else {
+      this.store = createSqliteMemoryStore(dbPath)
+      this.backend = "sqlite"
+    }
+    this.conversationStore = createConversationStore(dbPath)
   }
 
   async initialize(): Promise<void> {
@@ -64,6 +114,24 @@ export class MemoryManager {
   ): Promise<MemoryEntry> {
     await this.ensureInitialized()
     return this.store.remember({ content, type, importance, source, metadata })
+  }
+
+  /**
+   * Guarda varios recuerdos de una vez. En Hindsight se traducen a un único
+   * `retain` con varios items, no a una petición por recuerdo. Si el backend no
+   * soporta lotes, se cae a llamadas individuales.
+   */
+  async rememberMany(entries: NewMemoryEntry[]): Promise<MemoryEntry[]> {
+    await this.ensureInitialized()
+    if (entries.length === 0) return []
+    if (this.store.rememberMany) {
+      return this.store.rememberMany(entries)
+    }
+    const saved: MemoryEntry[] = []
+    for (const entry of entries) {
+      saved.push(await this.store.remember(entry))
+    }
+    return saved
   }
 
   async search(options: SearchOptions): Promise<SearchResult> {
@@ -111,8 +179,25 @@ export class MemoryManager {
     return this.conversationStore.getTokenCount(chatId)
   }
 
-  getBackendType(): "sqlite" | "custom" {
-    return storeFactory ? "custom" : "sqlite"
+  getBackendType(): "sqlite" | "hindsight" | "custom" {
+    return this.backend
+  }
+
+  /** True solo si el backend es Hindsight y ahora mismo responde. */
+  isHindsightAvailable(): boolean {
+    return this.store instanceof ResilientMemoryStore && this.store.isHindsightAvailable()
+  }
+
+  /** Cambios locales pendientes de enviar a Hindsight (outbox). */
+  getPendingSyncCount(): number {
+    return this.store instanceof ResilientMemoryStore ? this.store.pendingChanges() : 0
+  }
+
+  /** Fuerza una pasada de sincronización con Hindsight. */
+  async syncMemory(): Promise<void> {
+    if (this.store instanceof ResilientMemoryStore) {
+      await this.store.syncPending()
+    }
   }
 
   private async ensureInitialized(): Promise<void> {

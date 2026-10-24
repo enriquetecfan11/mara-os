@@ -15,7 +15,7 @@ Plantilla que estructura cómo se construye el system prompt. Contiene placehold
 | `{{SOUL}}` | `config/SOUL.md` | Personalidad del agente |
 | `{{USER}}` | `config/USER.md` | Información del usuario |
 | `{{AGENTS}}` | `config/AGENTS.md` | Reglas operativas |
-| `{{MEMORY}}` | `config/MEMORY.md` | Memoria persistente |
+| `{{MEMORY}}` | `MemoryManager.search()` (Hindsight o SQLite) | Recuerdos relevantes del mensaje |
 | `{{SKILLS}}` | Skills detectados | Instrucciones de dominio específico |
 
 Contiene instrucciones críticas:
@@ -55,17 +55,22 @@ Contiene:
 
 Incluye:
 - Formato de respuesta (texto plano, sin markdown)
-- Política de memoria (MEMORY.md vs servidor MCP)
+- Política de memoria (Hindsight como fuente principal, sin escribir a mano)
 - Lista de herramientas MCP disponibles con descripciones
 - Instrucciones obligatorias de uso de tools
 - Comportamiento en /help y /status
 
-## MEMORY.md — Memoria Persistente
+## MEMORY.md — Memoria Persistente (legacy)
 
 **Ubicación**: `config/MEMORY.md`
-**Propósito**: Almacenamiento de hechos y datos persistentes.
 
-Los recuerdos dinámicos se guardan en SQLite (`data/mara.db`). `MEMORY.md` se mantiene como archivo legacy editable a mano, y se lee al inicio del contexto.
+La memoria dinámica ya no vive aquí: la gestiona `MemoryManager` (Hindsight como
+fuente principal y SQLite como espejo/respaldo) y se inyecta en `{{MEMORY}}`
+como resultado de una búsqueda contextual.
+
+`MEMORY.md` se conserva como archivo estático editable a mano. Con Hindsight
+activo no se migra automáticamente a SQLite para no duplicar contenido. Ver
+[Sistema de memoria](../memory-system.md).
 
 ## Caché
 

@@ -9,7 +9,7 @@ El proyecto está diseñado para ser sencillo, legible y fácil de personalizar.
 - **Integración con Telegram**: Envío y recepción de mensajes directamente desde un bot de Telegram.
 - **Inferencia local**: Procesamiento de lenguaje natural utilizando Ollama y modelos locales (como Gemma, Llama o Phi).
 - **Personalidad y contexto persistentes**: Carga dinámica del contexto del agente a partir de archivos Markdown (`SOUL.md`, `USER.md`, `AGENTS.md`).
-- **Memoria persistente**: Usa `MEMORY.md` como memoria local persistente y puede conectar servidores MCP de memoria si están disponibles.
+- **Memoria persistente**: Hindsight como memoria principal a largo plazo (retención/recall semántico) con SQLite como historial y respaldo local. Sin servidores MCP obligatorios.
 - **Control de seguridad**: Flujo básico de aprobación para acciones externas críticas.
 - **Soporte multimedia**: Descarga automática de imágenes enviadas por Telegram a un directorio local de subidas para su posterior procesamiento.
 - **Síntesis de voz**: Genera audio con Voicebox TTS y lo envía junto con la respuesta de texto. Activable/desactivable por chat con el comando `/voz on|off`.
@@ -22,6 +22,8 @@ El proyecto está diseñado para ser sencillo, legible y fácil de personalizar.
 - **ffmpeg** en el PATH. Solo se usa para transcribir audio.
 - Un bot de Telegram (puedes crear uno con [@BotFather](https://t.me/BotFather)).
 - Un servidor **Ollama** accesible en la red (no hace falta en la misma máquina).
+- (Opcional) Un servidor **Hindsight** para memoria a largo plazo. Sin él, todo
+  funciona con SQLite local.
 - (Opcional) Voicebox instalado y ejecutándose para síntesis de voz.
 
 En **Raspberry Pi** hace falta además **Raspberry Pi OS de 64 bits**: tanto `better-sqlite3` como `onnxruntime-node` distribuyen sus binarios `linux-arm64` dentro del propio paquete de npm, pero no hay builds de 32 bits. No hace falta compilar nada a mano.
@@ -42,9 +44,13 @@ En **Raspberry Pi** hace falta además **Raspberry Pi OS de 64 bits**: tanto `be
 3. Edita `.env` con tus credenciales y configuración:
    ```env
    TELEGRAM_TOKEN=tu_token_de_telegram
-   OLLAMA_URL=http://192.168.1.182:11434
-   OLLAMA_MODEL=ornith-1.5:9b
-   OLLAMA_NUM_CTX=16384
+   LLM_PROVIDER=unsloth
+   OLLAMA_API=openai
+   OLLAMA_URL=http://192.168.1.79:8888
+   OLLAMA_MODEL=unsloth/Qwen3.5-4B-MTP-GGUF
+   OLLAMA_API_KEY=sk-tu-token
+   GROQ_API_KEY=
+   GROQ_MODEL=qwen/qwen3.8-27b
    TIMEZONE=Europe/Madrid
    STT_ENABLED=false
    VOICEBOX_URL=http://192.168.1.79:17493
@@ -53,15 +59,24 @@ En **Raspberry Pi** hace falta además **Raspberry Pi OS de 64 bits**: tanto `be
    TELEGRAM_SEND_VOICE=false
    MCP_DISABLED_SERVERS=macos_automator
    MARA_BRAIN_WS_URL=ws://0.0.0.0:9000
+   HINDSIGHT_ENABLED=true
+   HINDSIGHT_API_URL=http://192.168.1.196:8888
+   HINDSIGHT_BANK_ID=mara-os
    ```
 
 ### Variables de Configuración
 
 - **`TELEGRAM_TOKEN`**: Token del bot de Telegram (obligatorio).
 - **`TELEGRAM_CHAT_ID`**: ID del chat donde enviar mensajes de startup (opcional).
-- **`OLLAMA_URL`**: URL del servidor Ollama (default: `http://192.168.1.182:11434`).
-- **`OLLAMA_MODEL`**: Modelo a usar en Ollama (default: `ornith-1.5:9b`, con soporte de tool calling).
-- **`OLLAMA_NUM_CTX`**: Ventana de contexto por petición (default: `16384`). **No lo bajes del default de Ollama**: si el Modelfile no define `num_ctx`, el servidor usa 4096 tokens y las tools MCP del prompt (~3k) desbordan cualquier mensaje con `400 exceed_context_size_error`.
+- **`LLM_PROVIDER`**: Proveedor de inferencia **inicial**: `unsloth` = Unsloth Studio en la LAN (usa `OLLAMA_*`), `groq` = Groq Cloud (usa `GROQ_*`), `ollama` = Ollama nativo, `openai` = cualquier otro servidor OpenAI-compatible (usa `LLM_*`). El activo se cambia en caliente desde Telegram con `/modelo` (sin reiniciar); lo guardado en `data/llm-provider.json` manda sobre esta variable.
+- **`LLM_STATE_FILE`**: Dónde se persiste el proveedor elegido con `/modelo` (default: `data/llm-provider.json`).
+- **`OLLAMA_API`**: Dialecto del servidor local. `ollama` (default) habla `/api/chat`; `openai` habla `/v1/chat/completions` (Unsloth Studio, vLLM, llama.cpp server, LM Studio…).
+- **`OLLAMA_URL`**: URL del servidor local (default: `http://192.168.1.182:11434`).
+- **`OLLAMA_MODEL`**: Modelo del servidor local (default: `ornith-1.5:9b`, con soporte de tool calling).
+- **`OLLAMA_API_KEY`**: API key del servidor local, se envía como `Authorization: Bearer`. Vacío = sin cabecera (Ollama normal).
+- **`OLLAMA_NUM_CTX`**: Ventana de contexto por petición, solo dialecto `ollama` (default: `16384`). **No lo bajes del default de Ollama**: si el Modelfile no define `num_ctx`, el servidor usa 4096 tokens y las tools MCP del prompt (~3k) desbordan cualquier mensaje con `400 exceed_context_size_error`.
+- **`GROQ_API_KEY`**: API key de Groq Cloud. **`GROQ_MODEL`** (default: `qwen/qwen3.8-27b`, 131k de contexto) y **`GROQ_API_URL`** (default: `https://api.groq.com/openai`).
+- **`LLM_API_URL` / `LLM_MODEL` / `LLM_API_KEY` / `LLM_MAX_TOKENS`**: overrides genéricos que ganan sobre los del proveedor activo.
 - **`TIMEZONE`**: Zona horaria (default: `Europe/Madrid`).
 - **`STT_ENABLED`**: Interruptor maestro de transcripción de voz (default: `true`). Con `false` el bot no descarga el audio, no carga whisper y no llama a Voicebox: contesta al instante con un aviso.
 - **`STT_LOCAL_ENABLED`**: Solo si `STT_ENABLED=true`. `true` = whisper en esta máquina, `false` = Voicebox (default: `true`).
@@ -72,7 +87,13 @@ En **Raspberry Pi** hace falta además **Raspberry Pi OS de 64 bits**: tanto `be
 - **`VOICEBOX_PROFILE`**: Nombre del perfil de voz en Voicebox (default: `Mara`).
 - **`TELEGRAM_SEND_VOICE`**: Envía audio por defecto en nuevos chats (`true`/`false`, default: `false`). Se puede alternar por chat con `/voz on|off`.
 - **`MCP_DISABLED_SERVERS`**: Servidores MCP a desactivar, separados por comas. En una Raspberry Pi hay que poner `macos_automator`: depende de AppleScript y no puede funcionar fuera de macOS.
-- **`MCP_MEMORY_SERVERS`**: Servidores MCP que cuentan como backend de memoria, separados por comas. Vacío por defecto: la memoria va siempre a SQLite (`data/mara.db`), sin depender de ningún MCP.
+- **`MCP_MEMORY_SERVERS`**: Servidores MCP que cuentan como backend de memoria, separados por comas. Vacío por defecto: la memoria la gestiona el bot (Hindsight + SQLite) sin depender de ningún MCP.
+- **`HINDSIGHT_ENABLED`**: Activa Hindsight como memoria principal (`true`/`false`, default: `false`). Ausente = solo SQLite, como antes.
+- **`HINDSIGHT_API_URL`**: URL de la API de Hindsight (default: `http://192.168.1.196:8888`). El panel web (`:9999`) no se usa desde el bot.
+- **`HINDSIGHT_BANK_ID`**: Banco de memoria (default: `mara-os`).
+- **`HINDSIGHT_API_KEY`**: Opcional; se envía como `Authorization: Bearer`.
+- **`MEMORY_MIN_IMPORTANCE`**: Importancia mínima (0-1) para guardar un hecho extraído (default: `0.5`).
+- **`MEMORY_EXTRACTION_MIN_INTERVAL_MS`**: Mínimo entre extracciones del mismo chat (default: `60000`; `0` lo desactiva).
 - **`MARA_BRAIN_WS_URL`**: URL del servidor WebSocket "brain" que emite eventos v1 a Mara UI. Vacío = desactivado (default). Ver [Integración con Mara UI](#integración-con-mara-ui).
 
 **Nota**: Las respuestas de más de 500 caracteres envían solo texto para evitar sobrecarga. El audio se genera en español (`language: "es"`).
@@ -86,15 +107,15 @@ El agente define su comportamiento mediante archivos Markdown ubicados en la car
 - **`SOUL.md`**: Define la personalidad profunda del agente, su tono de comunicación y estilo preferido de respuestas.
 - **`USER.md`**: Información estable sobre el usuario (preferencias, tecnologías que usa, ubicación, etc.) para que el agente tenga contexto al responder.
 - **`AGENTS.md`**: Reglas operativas y del canal (por ejemplo, evitar markdown en Telegram, cómo y cuándo guardar recuerdos, límites de seguridad).
-- **`MEMORY.md`**: Memoria duradera local. El bot la usa como fuente persistente cuando no hay servidor MCP de memoria disponible.
+- **`MEMORY.md`**: Archivo legacy de memoria estática. Los recuerdos dinámicos van a Hindsight (con espejo en SQLite); con Hindsight activo no se migra automáticamente.
 - **`skills/`**: Guías Specialized que se inyectan en el contexto cuando el mensaje del usuario encaja con sus palabras clave.
 
 ## Ejecución
 
-Antes de arrancar, comprueba el backend de Ollama (conectividad, modelo presente, respuesta de texto y **tool calling**, de lo que dependen las herramientas MCP):
+Antes de arrancar, comprueba el proveedor de inferencia activo (conectividad, modelo presente, respuesta de texto y **tool calling**, de lo que dependen las herramientas MCP):
 
 ```bash
-pnpm check:ollama
+pnpm check:llm
 ```
 
 Para iniciar el bot en modo de desarrollo o ejecución normal:
@@ -111,14 +132,45 @@ pnpm bot:lite
 
 El proceso usa `process.cwd()` para localizar `config/` y `mcp.json`: **arráncalo siempre desde la raíz del repositorio**. Bajo systemd, fija `WorkingDirectory`.
 
+## Cambiar de proveedor sin reiniciar
+
+Desde Telegram:
+
+```
+/modelo          → estado de los cuatro proveedores (marca el activo)
+/modelo groq     → prueba que responde y lo activa
+/modelo unsloth  → vuelve al servidor de la LAN
+```
+
+Antes de cambiar, el bot consulta el listado de modelos del candidato y
+comprueba que el modelo configurado está disponible; si no responde, no cambia
+nada y explica por qué. La elección se guarda en `data/llm-provider.json`, así
+que sobrevive a los reinicios. `LLM_PROVIDER` es solo el valor inicial.
+
 ## Diagnóstico
 
 | Comando | Qué hace |
 |---|---|
-| `pnpm check:ollama` | Conectividad, modelo disponible, respuesta de texto y tool calling |
+| `pnpm check:llm` | Conectividad, modelo disponible, respuesta de texto y tool calling (`check:ollama` sigue como alias) |
+| `pnpm check:hindsight` | Salud, versión, banco y recall de Hindsight (solo lectura) + estado local |
 | `pnpm check:stt` | Confirma si el STT está activo o neutralizado |
 | `pnpm bench:stt <modelo>` | Mide precisión y velocidad de un modelo whisper sobre un audio real |
+| `pnpm test` | Tests de memoria contra un Hindsight falso (sin red) |
 | `pnpm typecheck` | TypeScript sin emitir |
+
+## Memoria a largo plazo (Hindsight)
+
+Con `HINDSIGHT_ENABLED=true`, Mara OS usa Hindsight como fuente principal:
+
+- Guarda cada hecho nuevo con `retain` (idempotente por `document_id`).
+- Recupera contexto con `recall` (`budget: "low"`, `prefer_observations`).
+- Olvida con `PATCH state=invalidated`; nunca borra el banco.
+- SQLite (`data/mara.db`) guarda el historial y hace de espejo/respaldo con una
+  outbox que se reintenta sola si el servidor no responde.
+
+No se migran recuerdos antiguos automáticamente. Detalle completo en
+[docs/memory-system.md](docs/memory-system.md) y
+[docs/operations/memory-management.md](docs/operations/memory-management.md).
 
 `pnpm bench:stt` es la herramienta para decidir el modelo de STT en un equipo concreto:
 
@@ -209,6 +261,11 @@ config/
 
 scripts/
   check-ollama.ts     # Diagnóstico del backend de Ollama
+  check-hindsight.ts  # Diagnóstico de Hindsight (solo lectura)
   check-stt-off.ts    # Comprueba que el STT queda neutralizado
   bench-stt.ts        # Compara modelos whisper sobre un audio real
+
+tests/
+  hindsight-store.test.ts    # Contrato REST del adaptador
+  resilient-memory.test.ts   # Fallback, outbox y olvido suave
 ```

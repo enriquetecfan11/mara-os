@@ -38,6 +38,9 @@ export async function buildContext(
     query: userMessage,
     limit: memorySearchLimit,
     minImportance: 0.3,
+    // Presupuesto para backends remotos (Hindsight): no traer más contexto del
+    // que luego se va a inyectar en el system prompt.
+    maxTokens: maxMemoryTokens,
   })
 
   const memoryContext = formatMemoryContext(memorySearch.entries, maxMemoryTokens)

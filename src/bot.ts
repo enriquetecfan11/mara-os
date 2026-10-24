@@ -4,9 +4,11 @@ import { appendFile, unlink, writeFile, mkdir } from "node:fs/promises"
 import { join } from "node:path"
 import { approvalMessage, sttDisabledMessage, hasApproval, needsApproval } from "./approvals.js"
 import { saveTelegramPhoto, saveTelegramFile } from "./telegram-files.js"
-import { telegramToken, telegramChatId, uploadsDir, ollamaUrl, ollamaModel, agentDir, timezone, voiceboxEnabled, telegramSendVoiceDefault, sttEnabled, sttLocalEnabled, maraUserName, startupWelcome } from "./config.js"
+import { telegramToken, telegramChatId, uploadsDir, agentDir, timezone, voiceboxEnabled, telegramSendVoiceDefault, sttEnabled, sttLocalEnabled, maraUserName, startupWelcome, llmProviderNames, resolveLlmProvider, checkLlmProvider, type ActiveLlm, type LlmProvider } from "./config.js"
+import { getActiveLlm, setActiveProvider, listProviderStatus } from "./providers.js"
 import { initMcpClients, closeMcpClients, callServerTool, getConnectedMcpServerNames, getRegisteredToolNames } from "./mcp.js"
 import { askPiWithRetry, clearChatHistory, cancelRequest } from "./ollama.js"
+import { isOpenAiApi, llmBaseUrl, llmHeaders, llmModelsEndpoint, readLlmError } from "./ollama-http.js"
 import { getMemoryManager } from "./memory/index.js"
 import { runMemoryMigration } from "./memory/migrate.js"
 import { getSkillList, loadSkillsContext, reloadSkills } from "./skills.js"
@@ -16,7 +18,7 @@ import { generateVoice, transcribeAudio, checkVoicebox } from "./voicebox.js"
 import { transcribeLocal } from "./stt.js"
 import { wavToOggOpus } from "./audio.js"
 import { startUiEvents, closeUiEvents, setState, emitMessage, emitConfirm, emitError, emitSpeakingStarted, emitSpeakingFinished, emitVoiceAudio, setCommandHandler, setAudioHandler, type UiCommand } from "./events.js"
-import { buildWelcomeText, sendWelcome } from "./welcome.js"
+import { buildWelcomeText, sendWelcome, invalidatePings } from "./welcome.js"
 
 function stripMarkdown(text: string): string {
   return text
@@ -222,6 +224,7 @@ bot.command("help", async (ctx) => {
 })
 
 bot.command("status", async (ctx) => {
+  const llm = getActiveLlm()
   const fileNames = ["SOUL.md", "USER.md", "AGENTS.md", "MEMORY.md"]
   const fileStats: string[] = []
   for (const name of fileNames) {
@@ -246,8 +249,9 @@ bot.command("status", async (ctx) => {
     "Estado del sistema",
     "",
     `Fecha: ${now}`,
-    `Modelo: ${ollamaModel}`,
-    `Ollama: ${ollamaUrl}`,
+    `Proveedor: ${llm.provider} (${llm.dialect})`,
+    `Modelo: ${llm.model}`,
+    `Servidor: ${llm.url}`,
     "",
     "Archivos de contexto:",
     ...fileStats,
@@ -257,6 +261,99 @@ bot.command("status", async (ctx) => {
   ]
 
   await ctx.reply(lines.join("\n"))
+})
+
+/** Estado de todos los proveedores, para `/modelo` sin argumentos. */
+function describeProviders(): string[] {
+  const llm = getActiveLlm()
+  const lines = ["Proveedor de inferencia", ""]
+  for (const p of listProviderStatus()) {
+    const missing = p.configured ? "" : ` — sin configurar (${p.reason})`
+    lines.push(`${p.active ? "▶" : " "} ${p.provider} [${p.dialect}]${missing}`)
+    lines.push(`    ${p.url}`)
+    lines.push(`    ${p.model}`)
+  }
+  lines.push("")
+  lines.push(`Activo: ${llm.provider}`)
+  lines.push(`Cambiar: /modelo ${llmProviderNames.join(" | ")}`)
+  return lines
+}
+
+/**
+ * Comprueba que un proveedor responde antes de activarlo: listado de modelos
+ * (`/v1/models` o `/api/tags`) y que el modelo configurado esté ahí. No manda una
+ * petición de chat para no gastar tokens ni cargar el modelo en el servidor.
+ */
+async function pingProvider(llm: ActiveLlm): Promise<{ ok: boolean; detail: string }> {
+  try {
+    const res = await fetch(llmModelsEndpoint(llm), {
+      headers: llmHeaders(false, llm),
+      signal: AbortSignal.timeout(8000),
+    })
+    if (!res.ok) return { ok: false, detail: await readLlmError(res) }
+
+    const data = (await res.json()) as any
+    const names: string[] = isOpenAiApi(llm)
+      ? (data?.data ?? []).map((m: any) => String(m.id ?? "")).filter(Boolean)
+      : (data?.models ?? []).map((m: any) => String(m.name ?? m.model ?? "")).filter(Boolean)
+
+    const wanted = llm.model.toLowerCase()
+    if (names.length > 0 && !names.some((n) => {
+      const name = n.toLowerCase()
+      return name === wanted || name === `${wanted}:latest`
+    })) {
+      return { ok: false, detail: `el modelo "${llm.model}" no está en el servidor` }
+    }
+    return { ok: true, detail: `${names.length} modelo(s) disponibles` }
+  } catch (err) {
+    return { ok: false, detail: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+bot.command("modelo", async (ctx) => {
+  const arg = (ctx.match ?? "").trim().toLowerCase()
+
+  if (!arg) {
+    await ctx.reply(describeProviders().join("\n"))
+    return
+  }
+
+  if (!(llmProviderNames as string[]).includes(arg)) {
+    await ctx.reply(`Proveedor desconocido: "${arg}"\nUsa: ${llmProviderNames.join(" | ")}`)
+    return
+  }
+  const provider = arg as LlmProvider
+
+  if (getActiveLlm().provider === provider) {
+    await ctx.reply(`Ya está activo ${provider} (${getActiveLlm().model}).`)
+    return
+  }
+
+  const missing = checkLlmProvider(provider)
+  if (!missing.ok) {
+    await ctx.reply(`No puedo activar ${provider}: ${missing.reason}`)
+    return
+  }
+
+  const candidate = resolveLlmProvider(provider)
+  await bot.api.sendChatAction(ctx.chat.id, "typing")
+  info("Inference", `Probando ${provider} (${candidate.url}) antes de activarlo…`)
+  const ping = await pingProvider(candidate)
+  if (!ping.ok) {
+    warn("Inference", `No se activa ${provider}: ${ping.detail}`)
+    await ctx.reply(`No cambio a ${provider}: no responde o no tiene el modelo.\n${ping.detail}\n\nSigue activo ${getActiveLlm().provider}.`)
+    return
+  }
+
+  const active = setActiveProvider(provider)
+  invalidatePings()
+  await checkOllama()
+  await ctx.reply([
+    `Proveedor activo: ${active.provider}`,
+    `Modelo: ${active.model}`,
+    `Servidor: ${active.url}`,
+    `(${ping.detail})`,
+  ].join("\n"))
 })
 
 bot.command("context", async (ctx) => {
@@ -282,6 +379,7 @@ bot.command("context", async (ctx) => {
   const memoryManager = getMemoryManager()
   const memoryBackend = memoryManager.getBackendType()
   const longTermMemories = await memoryManager.list(1, 0)
+  const pendingSync = memoryManager.getPendingSyncCount()
 
   const lines = [
     "execution_context:",
@@ -312,6 +410,12 @@ bot.command("context", async (ctx) => {
     `    backend: ${memoryBackend}`,
     `    long_term_entries: ${longTermMemories.length}`,
     `    legacy_memory_md: ${memoryStatus} (${memoryEntries} lines)`,
+    ...(memoryBackend === "hindsight"
+      ? [
+          `    hindsight_available: ${memoryManager.isHindsightAvailable()}`,
+          `    pending_sync: ${pendingSync}`,
+        ]
+      : []),
   ]
 
   await ctx.reply(lines.join("\n"))
@@ -592,14 +696,22 @@ bot.on("message:audio", async (ctx) => {
 
 async function checkOllama() {
   try {
-    const res = await fetch(`${ollamaUrl}/api/version`, { signal: AbortSignal.timeout(5000) })
+    const res = await fetch(llmModelsEndpoint(), { headers: llmHeaders(), signal: AbortSignal.timeout(5000) })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const data = await res.json() as { version: string }
-    info("Ollama", `Ping OK \u2014 version: ${data.version}`)
+
+    if (isOpenAiApi()) {
+      const data = (await res.json()) as { data?: Array<{ id?: string }> }
+      const names = (data.data ?? []).map((m) => m.id).filter((id): id is string => Boolean(id))
+      info("Ollama", `Ping OK \u2014 API OpenAI-compatible, ${names.length} modelo(s): ${names.slice(0, 3).join(", ")}`)
+    } else {
+      const version = await fetch(`${llmBaseUrl()}/api/version`, { signal: AbortSignal.timeout(5000) })
+      const data = (await version.json()) as { version?: string }
+      info("Ollama", `Ping OK \u2014 version: ${data.version ?? "desconocida"}`)
+    }
     return true
   } catch (err) {
-    logError("Ollama", `Ping FAILED \u2014 Ollama no responde en ${ollamaUrl}: ${err}`)
-    info("Ollama", "El bot arrancara pero las consultas fallaran hasta que Ollama este disponible.")
+    logError("Ollama", `Ping FAILED \u2014 el servidor no responde en ${llmBaseUrl()}: ${err}`)
+    info("Ollama", "El bot arrancara pero las consultas fallaran hasta que el servidor este disponible.")
     setState("offline")
     return false
   }
@@ -782,7 +894,8 @@ async function start() {
   await initMcpClients()
   await runMemoryMigration()
   info("Bot", `Telegram token present: ${telegramToken ? "yes" : "no"}`)
-  info("Bot", `Ollama endpoint: ${ollamaUrl}`)
+  const llm = getActiveLlm()
+  info("Bot", `Inference: ${llm.provider} (${llm.dialect}) ${llm.url} · model ${llm.model}`)
   await checkOllama()
   await checkVoicebox()
   info("Bot", "Starting Telegram bot...")

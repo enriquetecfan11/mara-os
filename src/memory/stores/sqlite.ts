@@ -1,7 +1,7 @@
 import { join } from "node:path"
 import Database from "better-sqlite3"
 import type { Database as DatabaseType } from "better-sqlite3"
-import { MemoryStore, MemoryEntry, MemoryType, SearchOptions, SearchResult } from "../types.js"
+import { MemoryStore, MemoryEntry, MemoryType, NewMemoryEntry, SearchOptions, SearchResult } from "../types.js"
 import { info, debug, error as logError, warn } from "../../logger.js"
 
 function generateId(): string {
@@ -49,6 +49,7 @@ export class SqliteMemoryStore implements MemoryStore {
 
   constructor(dbPath: string) {
     this.db = new Database(dbPath)
+    this.db.pragma("busy_timeout = 5000")
     this.setupDatabase()
   }
 
@@ -70,6 +71,12 @@ export class SqliteMemoryStore implements MemoryStore {
       CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance DESC);
       CREATE INDEX IF NOT EXISTS idx_memories_created_at ON memories(created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_memories_last_accessed ON memories(last_accessed DESC);
+      -- Tombstones: un recuerdo "olvidado" sigue en la tabla (no se destruyen
+      -- datos) pero deja de aparecer en búsquedas, listados y lecturas locales.
+      CREATE TABLE IF NOT EXISTS memory_tombstones (
+        id TEXT PRIMARY KEY,
+        forgotten_at INTEGER NOT NULL
+      );
       CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
         content,
         content=memories,
@@ -103,7 +110,16 @@ export class SqliteMemoryStore implements MemoryStore {
     }
   }
 
-  async remember(entry: Omit<MemoryEntry, "id" | "createdAt" | "updatedAt" | "lastAccessed" | "accessCount">): Promise<MemoryEntry> {
+  async remember(entry: NewMemoryEntry): Promise<MemoryEntry> {
+    return (await this.rememberDetailed(entry)).entry
+  }
+
+  /**
+   * Igual que `remember`, pero indica si la fila es nueva. El backend con
+   * respaldo lo usa para no reenviar a Hindsight un recuerdo duplicado (y, por
+   * tanto, para no migrar filas antiguas por accidente).
+   */
+  async rememberDetailed(entry: NewMemoryEntry): Promise<{ entry: MemoryEntry; created: boolean }> {
     const now = Date.now()
     const id = generateId()
 
@@ -113,7 +129,7 @@ export class SqliteMemoryStore implements MemoryStore {
       const updated = await this.get(duplicate.id)
       if (updated) {
         debug("MemoryStore", `Duplicate detected, updated access for: ${duplicate.id}`)
-        return updated
+        return { entry: updated, created: false }
       }
     }
 
@@ -145,7 +161,7 @@ export class SqliteMemoryStore implements MemoryStore {
 
     this.addToCache(newEntry)
     debug("MemoryStore", `Remembered: ${id} (${newEntry.type}, importance: ${newEntry.importance})`)
-    return newEntry
+    return { entry: newEntry, created: true }
   }
 
   private async findDuplicate(content: string, type: MemoryType): Promise<MemoryEntry | null> {
@@ -153,6 +169,7 @@ export class SqliteMemoryStore implements MemoryStore {
     const stmt = this.db.prepare(`
       SELECT * FROM memories
       WHERE type = ? AND LOWER(REPLACE(content, ' ', '')) = ?
+        AND NOT EXISTS (SELECT 1 FROM memory_tombstones t WHERE t.id = memories.id)
       ORDER BY importance DESC, created_at DESC
       LIMIT 1
     `)
@@ -174,6 +191,7 @@ export class SqliteMemoryStore implements MemoryStore {
       SELECT m.* FROM memories m
       JOIN memories_fts f ON m.rowid = f.rowid
       WHERE memories_fts MATCH ? AND m.importance >= ?
+        AND NOT EXISTS (SELECT 1 FROM memory_tombstones t WHERE t.id = m.id)
     `
     const params: unknown[] = [ftsQuery, minImportance]
 
@@ -213,10 +231,28 @@ export class SqliteMemoryStore implements MemoryStore {
     return result.changes > 0
   }
 
+  /**
+   * Olvido suave: conserva la fila original y la marca como tombstone. Es el
+   * modo que usa el backend con respaldo para no destruir datos mientras
+   * Hindsight invalida el recuerdo remoto.
+   */
+  async softForget(id: string): Promise<boolean> {
+    const exists = this.db.prepare(`SELECT 1 FROM memories WHERE id = ?`).get(id)
+    if (!exists) return false
+    this.db.prepare(`
+      INSERT INTO memory_tombstones (id, forgotten_at) VALUES (?, ?)
+      ON CONFLICT(id) DO UPDATE SET forgotten_at = excluded.forgotten_at
+    `).run(id, Date.now())
+    this.memoryCache.delete(id)
+    debug("MemoryStore", `Soft-forgot: ${id}`)
+    return true
+  }
+
   async list(limit = 50, offset = 0): Promise<MemoryEntry[]> {
     const stmt = this.db.prepare(`
-      SELECT * FROM memories
-      ORDER BY importance DESC, created_at DESC
+      SELECT m.* FROM memories m
+      WHERE NOT EXISTS (SELECT 1 FROM memory_tombstones t WHERE t.id = m.id)
+      ORDER BY m.importance DESC, m.created_at DESC
       LIMIT ? OFFSET ?
     `)
     const rows = stmt.all(limit, offset) as any[]
@@ -227,7 +263,11 @@ export class SqliteMemoryStore implements MemoryStore {
     const cached = this.memoryCache.get(id)
     if (cached) return cached
 
-    const stmt = this.db.prepare(`SELECT * FROM memories WHERE id = ?`)
+    const stmt = this.db.prepare(`
+      SELECT m.* FROM memories m
+      WHERE m.id = ?
+        AND NOT EXISTS (SELECT 1 FROM memory_tombstones t WHERE t.id = m.id)
+    `)
     const row = stmt.get(id) as any
     if (!row) return null
 
@@ -282,6 +322,6 @@ export class SqliteMemoryStore implements MemoryStore {
   }
 }
 
-export function createSqliteMemoryStore(dbPath: string): MemoryStore {
+export function createSqliteMemoryStore(dbPath: string): SqliteMemoryStore {
   return new SqliteMemoryStore(dbPath)
 }

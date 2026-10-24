@@ -13,8 +13,28 @@ agentDir: string            // path a config/
 skillsDir: string           // path a config/skills/
 uploadsDir: string          // path a config/uploads/
 memoryPath: string          // path a config/MEMORY.md
-ollamaUrl: string           // OLLAMA_URL (default: http://192.168.1.182:11434)
-ollamaModel: string         // OLLAMA_MODEL (default: ornith-1.5:9b)
+defaultLlmProvider: "unsloth" | "groq" | "ollama" | "openai"  // LLM_PROVIDER (valor inicial)
+llmProviderNames: LlmProvider[]          // orden en que se listan en /modelo
+ollamaUrl: string           // OLLAMA_URL (default: http://192.168.1.182:11434) — servidor local
+ollamaModel: string         // OLLAMA_MODEL (default: ornith-1.5:9b) — servidor local
+ollamaApiKey: string        // OLLAMA_API_KEY (default: "")
+ollamaApi: "ollama" | "openai"  // OLLAMA_API (default: ollama)
+ollamaNumCtx: number        // OLLAMA_NUM_CTX (default: 16384, solo dialecto ollama)
+groqApiUrl: string          // GROQ_API_URL (default: https://api.groq.com/openai)
+groqModel: string           // GROQ_MODEL (default: qwen/qwen3.8-27b)
+groqApiKey: string          // GROQ_API_KEY (default: "")
+
+interface ActiveLlm {
+  provider: LlmProvider
+  url: string               // sin barra final
+  model: string
+  apiKey: string            // "" = sin Authorization
+  dialect: "ollama" | "openai"
+  maxTokens: number         // LLM_MAX_TOKENS > OLLAMA_MAX_TOKENS (local) ; default 4096 en groq
+}
+
+resolveLlmProvider(provider): ActiveLlm   // datos de un proveedor sin activarlo
+checkLlmProvider(provider): { ok, reason? }  // ¿tiene API key / URL?
 timezone: string            // TIMEZONE (default: Europe/Madrid)
 brainWsUrl: string          // MARA_BRAIN_WS_URL (default: "", vacío = desactivado)
 
@@ -30,6 +50,20 @@ interface McpServerConfig {
 interface McpConfig {
   servers: McpServerConfig[]
 }
+```
+
+### src/providers.ts
+
+Estado del proveedor de inferencia en runtime. Lo cambia `/modelo`; se persiste
+en `data/llm-provider.json` (`LLM_STATE_FILE`) y manda sobre `LLM_PROVIDER`.
+
+```typescript
+getActiveLlm(): ActiveLlm          // resuelve (guardado > LLM_PROVIDER > OLLAMA_API) y cachea
+getActiveProviderName(): LlmProvider
+setActiveProvider(provider): ActiveLlm  // valida config, activa y persiste; lanza si falta algo
+listProviderStatus(): Array<{
+  provider, active, configured, reason?, url, model, dialect
+}>
 ```
 
 ### src/events.ts

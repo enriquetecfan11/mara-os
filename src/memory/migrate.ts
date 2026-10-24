@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
-import { agentDir, memoryPath } from "../config.js"
+import { agentDir, memoryPath, hindsightEnabled } from "../config.js"
 import { getMemoryManager } from "./index.js"
 import { info, warn, debug } from "../logger.js"
 
@@ -57,6 +57,14 @@ function guessType(content: string): string {
 }
 
 export async function runMemoryMigration(): Promise<void> {
+  // Con Hindsight activo, MEMORY.md no se vuelca automáticamente: su contenido
+  // podría acabar duplicado. No se marca como migrado, así que si algún día se
+  // desactiva Hindsight, la migración a SQLite sigue disponible.
+  if (hindsightEnabled) {
+    debug("Migration", "Hindsight activo: se omite la migración de MEMORY.md (nunca automática)")
+    return
+  }
+
   if (!(await isMigrationNeeded())) {
     debug("Migration", "Memory migration already done, skipping")
     return

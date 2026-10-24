@@ -3,7 +3,7 @@ import { join } from "node:path"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
-import { McpServerConfig, McpConfig } from "./config.js"
+import { McpServerConfig, McpConfig, hindsightEnabled, hindsightBankId } from "./config.js"
 import { info, error as logError, debug, warn } from "./logger.js"
 
 const SERVER_CONNECT_TIMEOUT_MS = 15_000
@@ -129,6 +129,12 @@ async function connectServer(server: McpServerConfig): Promise<{ server: McpServ
   if (memoryServerNames.has(server.name)) {
     hasMemoryServer = true
     info("Memory", `MCP memory server detected: "${server.name}"`)
+    if (hindsightEnabled) {
+      warn(
+        "Memory",
+        `Hindsight es la memoria principal; el MCP "${server.name}" queda como herramienta manual, no como backend de MemoryManager`,
+      )
+    }
   }
 
   info("MCP", `Connected to server "${server.name}"`)
@@ -206,7 +212,15 @@ export async function initMcpClients() {
     } else if (!hasMemoryServer) {
       warn("Memory", `Ninguno de los servidores MCP de memoria declarados (${Array.from(memoryServerNames).join(", ")}) conectó`)
     }
-    info("Memory", `Memory mode: ${hasMemoryServer ? "MCP memory server" : "SQLite (data/mara.db)"}`)
+
+    const memoryMode = hindsightEnabled
+      ? hasMemoryServer
+        ? `Hindsight (banco ${hindsightBankId}) + MCP "${Array.from(memoryServerNames).join(", ")}" (manual)`
+        : `Hindsight (banco ${hindsightBankId}) + SQLite local`
+      : hasMemoryServer
+        ? "MCP memory server"
+        : "SQLite (data/mara.db)"
+    info("Memory", `Memory mode: ${memoryMode}`)
   } catch (err) {
     logError("MCP", `Error reading or parsing mcp.json: ${err}`)
   }

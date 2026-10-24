@@ -7,8 +7,6 @@
 
 import {
   maraUserName,
-  ollamaUrl,
-  ollamaModel,
   timezone,
   voiceboxEnabled,
   voiceboxUrl,
@@ -17,7 +15,9 @@ import {
   sttModel,
   sttLanguage,
   brainWsUrl,
+  hindsightBankId,
 } from "./config.js"
+import { getActiveLlm } from "./providers.js"
 import { getMcpStatus } from "./mcp.js"
 import { isUiEnabled, getConnectedClientCount } from "./events.js"
 import { pingOllama } from "./ollama.js"
@@ -55,6 +55,11 @@ async function getPings(): Promise<{ ollama: boolean; voicebox: boolean }> {
   return { ollama, voicebox }
 }
 
+/** Invalida la caché de pings; se llama tras cambiar de proveedor con `/modelo`. */
+export function invalidatePings(): void {
+  pingCache = null
+}
+
 function describeMcp(): string[] {
   const status = getMcpStatus()
   const connected = new Set(status.connected)
@@ -80,10 +85,23 @@ async function describeMemory(): Promise<string[]> {
   try {
     const manager = getMemoryManager()
     const backend =
-      manager.getBackendType() === "sqlite" ? "SQLite (data/mara.db)" : "custom store"
+      manager.getBackendType() === "hindsight"
+        ? `Hindsight (banco ${hindsightBankId}) + SQLite local`
+        : manager.getBackendType() === "sqlite"
+          ? "SQLite (data/mara.db)"
+          : "custom store"
     const entries = await manager.list(1000)
     const count = entries.length === 1000 ? "1000+" : String(entries.length)
-    return [`Backend:    ${backend}`, `Recuerdos:  ${count}`]
+    const lines = [`Backend:    ${backend}`, `Recuerdos:  ${count}`]
+
+    if (manager.getBackendType() === "hindsight") {
+      const state = manager.isHindsightAvailable() ? "✅ operativo" : "❌ no responde (respaldo SQLite)"
+      lines.push(`Hindsight:  ${state}`)
+      const pending = manager.getPendingSyncCount()
+      if (pending > 0) lines.push(`Pendientes: ${pending} sin sincronizar`)
+    }
+
+    return lines
   } catch (err) {
     logError("Welcome", `No se pudo leer la memoria: ${err}`)
     return ["Backend:    (no disponible)"]
@@ -129,6 +147,7 @@ function describeCommands(): string[] {
     "/start      este mensaje de bienvenida",
     "/help       esta ayuda",
     "/status     fecha, modelo y ficheros de contexto",
+    "/modelo     proveedor de inferencia (sin args: estado)",
     "/context    contexto de ejecución y memoria",
     "/reset      limpia el historial de la conversación",
     "/cancel     detiene la petición en curso",
@@ -153,6 +172,7 @@ export async function buildWelcomeText(greetName: string = maraUserName, botUser
   const { ollama, voicebox } = await getPings()
   const skills = await getSkillList()
   const memoryLines = await describeMemory()
+  const llm = getActiveLlm()
 
   const now = new Date().toLocaleString("es-ES", {
     timeZone: timezone,
@@ -160,9 +180,9 @@ export async function buildWelcomeText(greetName: string = maraUserName, botUser
     timeStyle: "medium",
   })
 
-  const ollamaLine = ollama
-    ? `✅ accesible (${ollamaUrl})`
-    : `❌ no responde (${ollamaUrl})`
+  const engineLine = ollama
+    ? `✅ accesible (${llm.url})`
+    : `❌ no responde (${llm.url})`
 
   const skillLines = skills.length > 0
     ? skills.map((s) => `• ${s}`)
@@ -176,8 +196,9 @@ export async function buildWelcomeText(greetName: string = maraUserName, botUser
     `Zona:      ${timezone}`,
     "",
     heading("Motor"),
-    `Modelo:    ${ollamaModel}`,
-    `Ollama:    ${ollamaLine}`,
+    `Proveedor: ${llm.provider} (${llm.dialect})`,
+    `Modelo:    ${llm.model}`,
+    `Servidor:  ${engineLine}`,
     "",
     heading("Herramientas (MCP)"),
     ...describeMcp(),

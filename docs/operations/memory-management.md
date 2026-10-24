@@ -1,29 +1,93 @@
 # Gestión de Memoria
 
-## Un único backend
+## Dos capas, una fuente principal
 
-La memoria persistente vive en **SQLite** (`data/mara.db`), con FTS5 para búsqueda
-de texto completo. No depende de ningún servidor MCP, así que sigue funcionando
-aunque todos los servidores MCP estén caídos.
+- **Historial de conversación**: SQLite (`conversations` en `data/mara.db`).
+  Siempre local, nunca se envía a Hindsight.
+- **Memoria a largo plazo**: **Hindsight** (banco `mara-os`) con SQLite como
+  espejo local y respaldo.
 
-- Índice FTS5 para búsqueda por texto completo
-- Extracción automática de hechos tras cada respuesta (`memory-extractor.ts`)
-- Deduplicación por contenido normalizado antes de insertar
-- Caché LRU de 500 entradas para lecturas frecuentes
+```
+HINDSIGHT_ENABLED=true   → Hindsight + SQLite (espejo/outbox)
+HINDSIGHT_ENABLED=false  → solo SQLite (comportamiento anterior)
+```
 
-## MEMORY.md (archivo legacy)
+## Requisitos y configuración
 
-`config/MEMORY.md` se mantiene como archivo editable a mano. Se lee al inicio
-del contexto del agente, pero los recuerdos dinámicos van a SQLite.
+En `.env`:
 
-Una migración única (`runMemoryMigration()`) vuelca su contenido a SQLite en el
-primer arranque y deja el marcador `config/.memory_migrated`.
+```env
+HINDSIGHT_ENABLED=true
+HINDSIGHT_API_URL=http://192.168.1.196:8888
+HINDSIGHT_BANK_ID=mara-os
+# HINDSIGHT_API_KEY=          # solo si el servidor tiene auth
+# HINDSIGHT_TENANT=default
+# HINDSIGHT_TIMEOUT_MS=8000
+# HINDSIGHT_RETAIN_TIMEOUT_MS=25000
+# HINDSIGHT_HEALTH_TIMEOUT_MS=2500
+# HINDSIGHT_SYNC_BATCH_SIZE=10
+# HINDSIGHT_SYNC_INTERVAL_MS=60000
+# MEMORY_MIN_IMPORTANCE=0.5
+# MEMORY_EXTRACTION_MIN_INTERVAL_MS=60000
+```
 
-## Cambiar el backend
+El panel (`:9999`) no lo usa el bot; todo va por la API (`:8888`).
 
-El backend es extensible sin tocar `MemoryManager`. Implementa la interfaz
-`MemoryStore` de `src/memory/types.ts` y regístralo antes de que se cree el
-`MemoryManager` por primera vez:
+## Verificar antes de arrancar
+
+```bash
+pnpm check:hindsight
+```
+
+Es **solo lectura**: comprueba salud, versión, existencia del banco, `stats`, un
+`recall` de prueba, y el estado local (memorias, tombstones y pendientes de
+sincronizar). Sale con 0 si todo está bien.
+
+## Qué pasa si Hindsight no responde
+
+1. La escritura se guarda en SQLite y entra en la outbox `memory_sync`.
+2. La búsqueda y el listado se resuelven contra SQLite.
+3. El circuito se abre 30 s para no martillear el servidor.
+4. Cada `HINDSIGHT_SYNC_INTERVAL_MS` (o al llamar `syncMemory()`) se reintenta
+   con backoff exponencial. Al volver el servidor, la outbox se vacía sola.
+
+No se pierde ni se duplica: el `document_id` estable hace el retain idempotente.
+
+## MEMORY.md (legacy)
+
+`config/MEMORY.md` ya no recibe recuerdos dinámicos. Con Hindsight activo, la
+migración automática a SQLite se omite a propósito para no duplicar contenido.
+Las filas antiguas de `memories` tampoco se envían solas a Hindsight.
+
+## Comandos
+
+- `/memory [query]` — Buscar recuerdos
+- `/memory search <texto>` — Búsqueda explícita
+- `/memory list` — Listar los más importantes
+- `/memory forget <id>` — Olvidar (suave y reversible)
+- `/reset` — Limpia el historial de conversación (no toca la memoria)
+- `pnpm check:hindsight` — Diagnóstico de solo lectura
+
+## Ver el estado
+
+En los logs de arranque:
+
+```
+[Memory] Memory mode: Hindsight (banco mara-os) + SQLite local
+[MemoryManager] Memoria: Hindsight (0 cambios pendientes de sincronizar)
+```
+
+Si Hindsight no está disponible:
+
+```
+[Hindsight] No disponible en http://192.168.1.196:8888; se usará SQLite como respaldo
+```
+
+O envía `/status` / `/context`: muestran backend, disponibilidad y pendientes.
+
+## Cambiar de backend
+
+`MemoryManager` sigue siendo extensible sin tocar el resto del bot:
 
 ```ts
 import { registerMemoryStoreFactory } from "./memory/memory-manager.js"
@@ -31,37 +95,13 @@ import { registerMemoryStoreFactory } from "./memory/memory-manager.js"
 registerMemoryStoreFactory(() => new MiMemoryStore())
 ```
 
-Los métodos públicos no cambian, así que el resto del bot no se entera. Si además
-el backend es un servidor MCP, declara su nombre en `MCP_MEMORY_SERVERS` para que
-cuente como servidor de memoria en los logs de arranque.
+Implementa `MemoryStore` de `src/memory/types.ts`. Si defines una fábrica,
+tiene prioridad sobre `HINDSIGHT_ENABLED`.
 
-## Comandos
+## Operación y mantenimiento
 
-- `/memory [query]` — Buscar recuerdos
-- `/memory forget <id>` — Olvidar un recuerdo específico
-- `/reset` — Limpia el historial de conversación (no afecta a la memoria persistente)
-- `pnpm reset-bot` — Vacía MEMORY.md
-- `pnpm reset-memory` — Restaura MEMORY.md desde git
-
-## Ver el estado de la memoria
-
-En los logs de arranque:
-
-```
-[Memory] Memory mode: SQLite (data/mara.db)
-```
-
-Si conectaste un servidor MCP de memoria declarado en `MCP_MEMORY_SERVERS`:
-
-```
-[Memory] Memory mode: MCP memory server
-```
-
-O envía `/status` al bot, que informa del backend y del número de recuerdos.
-
-## Notas
-
-- La base de datos vive en `/var/lib/mara/memory/mara.db` si existe ese
-  directorio o si `NODE_ENV=production`; en desarrollo, en `data/mara.db`.
-- El historial de conversación es otro almacén (`conversations` en la misma base)
-  y se resume automáticamente cuando supera el presupuesto de tokens.
+- Copia de seguridad local: `data/mara.db` (o `/var/lib/mara/memory/mara.db` en
+  producción). Contiene historial, espejo de memoria y outbox.
+- El banco de Hindsight se respalda desde el servidor; el bot nunca lo borra.
+- Los recuerdos olvidados quedan como `invalidated` en Hindsight y como
+  tombstone en local: recuperables, no destruidos.

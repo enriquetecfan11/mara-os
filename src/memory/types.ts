@@ -52,7 +52,18 @@ export interface SearchOptions {
   limit?: number
   types?: MemoryType[]
   minImportance?: number
+  /**
+   * Presupuesto de tokens para el backend remoto (Hindsight). SQLite lo ignora.
+   * Permite no traer más contexto del que luego se va a inyectar en el prompt.
+   */
+  maxTokens?: number
 }
+
+/** Entrada que aceptan los almacenes antes de asignar id y fechas. */
+export type NewMemoryEntry = Omit<
+  MemoryEntry,
+  "id" | "createdAt" | "updatedAt" | "lastAccessed" | "accessCount"
+>
 
 export interface SearchResult {
   entries: MemoryEntry[]
@@ -62,7 +73,12 @@ export interface SearchResult {
 export interface MemoryStore {
   initialize(): Promise<void>
   close(): Promise<void>
-  remember(entry: Omit<MemoryEntry, "id" | "createdAt" | "updatedAt" | "lastAccessed" | "accessCount">): Promise<MemoryEntry>
+  remember(entry: NewMemoryEntry): Promise<MemoryEntry>
+  /**
+   * Opcional: los backends remotos pueden guardar varios recuerdos en una sola
+   * petición. Si no existe, MemoryManager los guarda uno a uno.
+   */
+  rememberMany?(entries: NewMemoryEntry[]): Promise<MemoryEntry[]>
   search(options: SearchOptions): Promise<SearchResult>
   forget(id: string): Promise<boolean>
   list(limit?: number, offset?: number): Promise<MemoryEntry[]>

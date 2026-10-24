@@ -59,7 +59,7 @@ Esto previene errores de procesos hijos al cerrar abruptamente.
 
 La memoria persistente va en SQLite (`data/mara.db`) y no depende de ningún servidor MCP, así que no se pierde si un servidor MCP falla. `MEMORY.md` se mantiene como archivo legacy editable a mano.
 
-Para enchufrar otro almacén, implementa la interfaz `MemoryStore` de `src/memory/types.ts` y regístralo con `registerMemoryStoreFactory()` en `src/memory/memory-manager.ts`. Si además es un servidor MCP, declara su nombre en `MCP_MEMORY_SERVERS` para que cuente como backend de memoria en los logs.
+Para enchufar otro almacén, implementa la interfaz `MemoryStore` de `src/memory/types.ts` y regístralo con `registerMemoryStoreFactory()` en `src/memory/memory-manager.ts`. Esa fábrica tiene prioridad sobre `HINDSIGHT_ENABLED`. Si además es un servidor MCP, declara su nombre en `MCP_MEMORY_SERVERS`; con Hindsight activo solo cuenta como tool manual, no como backend.
 
 ## Añadir un Nuevo Servidor MCP
 
