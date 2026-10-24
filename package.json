@@ -9,6 +9,7 @@
     "check:ollama": "node --env-file-if-exists=.env --import tsx scripts/check-ollama.ts",
     "check:llm": "node --env-file-if-exists=.env --import tsx scripts/check-ollama.ts",
     "check:hindsight": "node --env-file-if-exists=.env --import tsx scripts/check-hindsight.ts",
+    "import:obsidian": "node --env-file-if-exists=.env --import tsx scripts/import-obsidian.ts",
     "test": "node --import tsx --test tests/*.test.ts",
     "typecheck": "tsc --noEmit",
     "reset-bot": "rm -rf config/MEMORY.md && touch config/MEMORY.md",

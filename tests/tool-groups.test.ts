@@ -44,14 +44,14 @@ describe("tool-groups", () => {
 
   it("por defecto solo está activa la memoria", () => {
     assert.ok(listToolGroups().every((g) => !g.enabled))
-    assert.deepEqual(names(getActiveTools()), ["buscar_recuerdos", "guardar_recuerdo"])
+    assert.deepEqual(names(getActiveTools()), ["buscar_en_notas", "buscar_recuerdos", "guardar_recuerdo"])
   })
 
   it("on activa grupos y off los vuelve a apagar", () => {
     assert.deepEqual(setToolGroups(["tareas", "agentdesk"], "on"), { ok: true })
-    assert.deepEqual(names(getActiveTools()), ["buscar_recuerdos", "create_task", "guardar_recuerdo", "list_tasks", "whoami"])
+    assert.deepEqual(names(getActiveTools()), ["buscar_en_notas", "buscar_recuerdos", "create_task", "guardar_recuerdo", "list_tasks", "whoami"])
     assert.deepEqual(setToolGroups(["tareas", "notas", "agentdesk"], "off"), { ok: true })
-    assert.deepEqual(names(getActiveTools()), ["buscar_recuerdos", "guardar_recuerdo"])
+    assert.deepEqual(names(getActiveTools()), ["buscar_en_notas", "buscar_recuerdos", "guardar_recuerdo"])
     assert.equal(isToolEnabled("guardar_recuerdo"), true)
     assert.equal(isToolEnabled("create_task"), false)
   })
@@ -70,7 +70,7 @@ describe("tool-groups", () => {
 
   it("solo deja activos los grupos indicados y lo persiste", () => {
     assert.deepEqual(setToolGroups(["notas"], "only"), { ok: true })
-    assert.deepEqual(names(getActiveTools()), ["buscar_recuerdos", "create_note", "guardar_recuerdo"])
+    assert.deepEqual(names(getActiveTools()), ["buscar_en_notas", "buscar_recuerdos", "create_note", "guardar_recuerdo"])
     const saved = JSON.parse(readFileSync(stateFile, "utf8"))
     assert.deepEqual(saved.enabled, ["notas"])
   })

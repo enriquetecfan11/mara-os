@@ -179,6 +179,9 @@ export const hindsightEnabled =
 export const hindsightApiUrl =
   process.env.HINDSIGHT_API_URL || "http://192.168.1.196:8888"
 export const hindsightBankId = process.env.HINDSIGHT_BANK_ID || "mara-os"
+// Banco aparte para las notas de Obsidian (pnpm import:obsidian). Separado de la
+// memoria personal para que las notas no desplacen a los recuerdos en el recall.
+export const hindsightNotesBankId = process.env.HINDSIGHT_NOTES_BANK_ID || "obsidian"
 // Opcional: si el servidor Hindsight tiene habilitada la autenticación por API
 // key, se envía como Authorization: Bearer <key>. Vacío = sin cabecera.
 export const hindsightApiKey = process.env.HINDSIGHT_API_KEY || ""

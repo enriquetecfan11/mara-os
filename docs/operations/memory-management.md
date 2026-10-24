@@ -254,3 +254,46 @@ tiene prioridad sobre `HINDSIGHT_ENABLED`.
 - El banco de Hindsight se respalda desde el servidor; el bot nunca lo borra.
 - Los recuerdos olvidados quedan como `invalidated` en Hindsight y como
   tombstone en local: recuperables, no destruidos.
+
+## Notas de Obsidian
+
+El vault se importa a un **banco aparte** (`HINDSIGHT_NOTES_BANK_ID`, por
+defecto `obsidian`) para que miles de hechos de las notas no desplacen a los
+recuerdos personales en el recall. Mara lo consulta solo cuando hace falta, con
+la tool `buscar_en_notas` (siempre activa, junto a las de memoria), que cita la
+nota de origen.
+
+```bash
+pnpm import:obsidian ~/Documents/obisidian-vault --folder MaraOs --dry-run  # qué se enviaría
+pnpm import:obsidian ~/Documents/obisidian-vault --folder MaraOs            # piloto
+pnpm import:obsidian ~/Documents/obisidian-vault                            # todo
+```
+
+- Cada nota es un documento `obsidian:<ruta>`: reimportar la **reemplaza**, no
+  la duplica.
+- Solo se envían las notas nuevas o modificadas desde la última vez (hash en
+  `data/obsidian-import.json`); `--force` lo reenvía todo. Si una nota falla,
+  volver a ejecutar reintenta solo esa.
+- Se saltan `.obsidian`, `.trash`, `templates` y las notas casi vacías; el
+  frontmatter se quita.
+- Se ejecuta donde está el vault (el Mac) contra el Hindsight de la LAN.
+
+### Coste: usar un LLM local para el retain
+
+Cada nota pasa por el LLM de extracción de Hindsight (~3000 tokens de prompt
+por fragmento). Un vault entero agota rápido el plan gratuito de Groq. Para
+que el **retain** use el servidor local (Unsloth) y lo demás siga en Groq, en
+el `.env` del servidor Hindsight:
+
+```env
+HINDSIGHT_API_RETAIN_LLM_PROVIDER=openai
+HINDSIGHT_API_RETAIN_LLM_BASE_URL=http://192.168.1.79:8888/v1
+HINDSIGHT_API_RETAIN_LLM_API_KEY=<OLLAMA_API_KEY de Mara>
+HINDSIGHT_API_RETAIN_LLM_MODEL=unsloth/Qwen3.5-4B-MTP-GGUF
+HINDSIGHT_API_LLM_STRICT_SCHEMA_RETAIN=true
+```
+
+El retain es de todo el servidor, no por banco: los recuerdos de Mara también
+se extraerán con el modelo local. `STRICT_SCHEMA_RETAIN` fuerza JSON válido con
+gramática, necesario con modelos pequeños.
+

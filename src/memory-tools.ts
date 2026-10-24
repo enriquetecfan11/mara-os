@@ -2,7 +2,16 @@
 // resuelven aquí contra MemoryManager (Hindsight + espejo SQLite), sin
 // pasar por ningún servidor MCP.
 
-import { getMemoryManager, type MemoryType } from "./memory/index.js"
+import { getMemoryManager, createHindsightMemoryStore, type MemoryType } from "./memory/index.js"
+import type { HindsightMemoryStore } from "./memory/index.js"
+import {
+  hindsightEnabled,
+  hindsightApiUrl,
+  hindsightApiKey,
+  hindsightTenant,
+  hindsightTimeoutMs,
+  hindsightNotesBankId,
+} from "./config.js"
 import { debug } from "./logger.js"
 
 const MEMORY_TYPES: MemoryType[] = [
@@ -54,7 +63,38 @@ export const memoryToolSchemas = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "buscar_en_notas",
+      description:
+        "Busca en las notas de Obsidian de Kike (su vault: IA, programación, proyectos, redes sociales, notas personales). Úsala cuando pregunte por algo que pueda estar en sus notas o apuntes.",
+      parameters: {
+        type: "object",
+        properties: {
+          consulta: { type: "string", description: "Qué buscar, en lenguaje natural." },
+          limite: { type: "number", description: `Máximo de resultados (1-${SEARCH_LIMIT_MAX}). Por defecto 8.` },
+        },
+        required: ["consulta"],
+      },
+    },
+  },
 ]
+
+// Las notas viven en un banco aparte y solo se leen: no pasan por el
+// MemoryManager (ni SQLite ni outbox), se consulta Hindsight directamente.
+let notesStore: HindsightMemoryStore | undefined
+
+function getNotesStore(): HindsightMemoryStore {
+  notesStore ??= createHindsightMemoryStore({
+    apiUrl: hindsightApiUrl,
+    bankId: hindsightNotesBankId,
+    apiKey: hindsightApiKey,
+    tenant: hindsightTenant,
+    timeoutMs: hindsightTimeoutMs,
+  })
+  return notesStore
+}
 
 /** Guarda un recuerdo manual (Hindsight + espejo SQLite) y describe el resultado. */
 export async function saveMemory(content: string, type: MemoryType = "other", importance = 0.8): Promise<string> {
@@ -104,6 +144,24 @@ const handlers: Record<string, (args: any) => Promise<string>> = {
     const result = await getMemoryManager().search({ query, limit })
     if (result.entries.length === 0) return "No hay recuerdos sobre eso."
     return result.entries.map((e) => `- [${e.type}] ${e.content}`).join("\n")
+  },
+
+  async buscar_en_notas(args) {
+    if (!hindsightEnabled) return "Las notas de Obsidian no están disponibles: Hindsight está desactivado."
+    const query = String(args?.consulta ?? "").trim()
+    if (!query) throw new Error("Falta 'consulta'")
+    const raw = Number(args?.limite)
+    const limit = Number.isFinite(raw) ? Math.max(1, Math.min(SEARCH_LIMIT_MAX, Math.trunc(raw))) : 8
+
+    const result = await getNotesStore().search({ query, limit, maxTokens: 3000 })
+    if (result.entries.length === 0) return "No hay nada sobre eso en las notas de Obsidian."
+    return result.entries
+      .map((e) => {
+        const docId = String(e.metadata?.documentId ?? "")
+        const note = docId.startsWith("obsidian:") ? ` (nota: ${docId.slice("obsidian:".length)})` : ""
+        return `- ${e.content}${note}`
+      })
+      .join("\n")
   },
 }
 

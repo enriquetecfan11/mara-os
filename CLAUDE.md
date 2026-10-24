@@ -71,6 +71,8 @@ pnpm reset-memory     # Restore MEMORY.md to git state
   - `closeMcpClients()`: Gracefully disconnects all MCP servers (used on SIGINT/SIGTERM). Prevents unhandled errors from child processes.
   - `hasMemoryServer`: Flag indicating whether one of the MCP servers declared in `MCP_MEMORY_SERVERS` connected. Empty by default. With Hindsight enabled, an MCP memory server is only a manual tool, never the `MemoryManager` backend.
 
+- **obsidian.ts** + `scripts/import-obsidian.ts` (`pnpm import:obsidian <vault>`): imports an Obsidian vault into a separate Hindsight bank (`HINDSIGHT_NOTES_BANK_ID`, default `obsidian`), one document per note (`obsidian:<path>`, re-import replaces), skipping unchanged notes via `data/obsidian-import.json`. Mara queries it with the always-on `buscar_en_notas` tool (`memory-tools.ts`).
+
 - **memory/**: Long-term memory subsystem.
   - `memory-manager.ts`: Single public API (`remember`, `rememberMany`, `search`, `forget`, `list`, `get`) and backend selection: `custom` factory > `hindsight` (when `HINDSIGHT_ENABLED=true`) > `sqlite`.
   - `conversation-store.ts`: SQLite conversation history (short term). Unaffected by Hindsight.
