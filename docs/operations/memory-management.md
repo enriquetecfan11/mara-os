@@ -263,6 +263,16 @@ recuerdos personales en el recall. Mara lo consulta solo cuando hace falta, con
 la tool `buscar_en_notas` (siempre activa, junto a las de memoria), que cita la
 nota de origen.
 
+Lo más cómodo es el script, que usa el vault por defecto
+(`~/Documents/obisidian-vault`, o `OBSIDIAN_VAULT`) y acepta las mismas opciones:
+
+```bash
+scripts/import_vault.sh              # importa lo nuevo o modificado
+scripts/import_vault.sh --dry-run    # qué enviaría, sin enviar nada
+```
+
+O directamente:
+
 ```bash
 pnpm import:obsidian ~/Documents/obisidian-vault --folder MaraOs --dry-run  # qué se enviaría
 pnpm import:obsidian ~/Documents/obisidian-vault --folder MaraOs            # piloto
