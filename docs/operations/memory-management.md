@@ -271,6 +271,12 @@ scripts/import_vault.sh              # importa lo nuevo o modificado
 scripts/import_vault.sh --dry-run    # qué enviaría, sin enviar nada
 ```
 
+En el homelab, con el vault clonado en `~/mara/obisidian-vault`,
+`scripts/homelab/sync_vault.sh` hace todo: `git pull` del vault, importación
+dentro de la imagen `mara-os` (sin Node en el host) y comprobación final
+(Hindsight sano, 0 notas pendientes, la búsqueda devuelve notas). Se copia a
+`~/mara/scripts/`. Las notas borradas del vault no se borran de Hindsight.
+
 O directamente:
 
 ```bash
