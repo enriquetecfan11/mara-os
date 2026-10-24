@@ -155,8 +155,8 @@ mismo documento, no crea un duplicado.
   sin seguir golpeando el servidor.
 - Un `retain` que falla en el servidor (p. ej. su LLM de extracción) también
   cuenta como 5xx: `/help` mostrará `Hindsight: ❌` durante esos 30 s aunque
-  `/health` responda. Si Hindsight usa Groq en plan gratuito, necesita
-  `HINDSIGHT_API_LLM_GROQ_SERVICE_TIER=on_demand`; ver
+  `/health` responda. Si Hindsight usa Groq en plan gratuito, configúralo con
+  el proveedor `openai` y la URL de Groq; ver
   [Gestión de memoria](operations/memory-management.md#hindsight-responde-pero-la-outbox-no-se-vacía).
 
 ---

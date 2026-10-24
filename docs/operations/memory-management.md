@@ -35,17 +35,60 @@ El panel (`:9999`) no lo usa el bot; todo va por la API (`:8888`).
 
 ### Servidor Hindsight con Groq
 
-Hindsight ejecuta su propio LLM para extraer hechos en cada `retain`. Si usa
-Groq (`HINDSIGHT_API_LLM_PROVIDER=groq`), por defecto pide
-`service_tier: auto`, que el plan gratuito de Groq no admite. Configura el
-contenedor de **Hindsight** (no el de Mara) con:
+Hindsight ejecuta su propio LLM para extraer hechos en cada `retain`. Con
+`HINDSIGHT_API_LLM_PROVIDER=groq` pide `service_tier: auto`, que el plan
+gratuito de Groq rechaza (`HTTP 500 ... service_tier auto is not available`).
+La variable `HINDSIGHT_API_LLM_GROQ_SERVICE_TIER=on_demand` debería evitarlo,
+pero en la práctica no fue fiable. Lo que funciona es usar Groq a través del
+proveedor `openai`, que no envía `service_tier`:
+
+`.env` del servidor Hindsight (no el de Mara):
 
 ```env
-HINDSIGHT_API_LLM_GROQ_SERVICE_TIER=on_demand
+HINDSIGHT_API_LLM_PROVIDER=openai
+HINDSIGHT_API_LLM_BASE_URL=https://api.groq.com/openai/v1
+HINDSIGHT_API_LLM_API_KEY=gsk_...
+HINDSIGHT_API_LLM_MODEL=openai/gpt-oss-120b
+HINDSIGHT_API_WORKER_ID=mara-hindsight
 ```
 
-y recréalo con `docker compose up -d`: `restart` no recarga las variables.
-Comprueba que la tiene con `docker exec mara-hindsight env | grep SERVICE_TIER`.
+`compose.yml` (uno solo en la carpeta: si hay `compose.yaml` y `compose.yml`,
+Docker usa `compose.yaml` y avisa con `Found multiple config files`):
+
+```yaml
+services:
+  hindsight:
+    image: ghcr.io/vectorize-io/hindsight:latest
+    container_name: mara-hindsight
+    restart: unless-stopped
+    shm_size: "1gb"
+    ports:
+      - "8888:8888"
+      - "9999:9999"
+    env_file: .env
+    volumes:
+      - hindsight-data:/home/hindsight/.pg0
+
+volumes:
+  hindsight-data:
+```
+
+Errores que aparecieron al montarlo:
+
+- **El `.env` no llega al contenedor.** Sin `env_file: .env`, Compose solo usa
+  el `.env` para sustituir `${VAR}` en el YAML. Un bloque `environment:` con
+  `HINDSIGHT_API_LLM_PROVIDER: groq` fijo gana a lo que pongas en el `.env`.
+- **`LLM API key is required`**: el compose referencia una variable
+  (`${GROQ_API_KEY}`) que ya no existe en el `.env`.
+- **`401 Invalid API Key`**: la clave de Groq no es válida. Compruébala con
+  `curl -H "Authorization: Bearer $K" https://api.groq.com/openai/v1/models`
+  (tiene que dar 200), sin comillas ni espacios en el `.env`.
+- **`/home/hindsight/.pg0 is not writable`**: con una carpeta del host
+  (`./data`), Docker la crea como root y Hindsight corre como UID 1000. Usa el
+  volumen con nombre de arriba o `sudo chown -R 1000:1000 data`.
+
+Tras cambiar variables: `docker compose up -d --force-recreate` (`restart` no
+las recarga). El log debe mostrar `LLM: provider=openai, model=...`.
 
 ## Verificar antes de arrancar
 
@@ -84,12 +127,25 @@ console.table(db.prepare('SELECT memory_id, attempts, last_error FROM memory_syn
 ```
 
 - `Hindsight HTTP 500: Fact extraction failed ... service_tier auto is not
-  available for this org`: falta `HINDSIGHT_API_LLM_GROQ_SERVICE_TIER=on_demand`
-  en el servidor (ver [Servidor Hindsight con Groq](#servidor-hindsight-con-groq)).
+  available for this org`: Hindsight usa el proveedor `groq`; cámbialo a
+  `openai` con la URL de Groq (ver [Servidor Hindsight con Groq](#servidor-hindsight-con-groq)).
+- `... Invalid API Key`: la clave de Groq del servidor Hindsight no es válida.
 - Otro `HTTP 500`: mira los logs del contenedor de Hindsight; suele ser su LLM.
 - `timeout` / `aborted`: el retain tarda más que `HINDSIGHT_RETAIN_TIMEOUT_MS`.
 - `Hindsight en circuito abierto por fallo reciente`: consecuencia de otro
   fallo, no la causa; busca la fila con el error real.
+
+`check:hindsight` en 7/7 **no** demuestra que Hindsight guarde: solo que la
+outbox local está vacía. La prueba es `total_documents` > 0 en `Stats`, o un
+retain directo a un banco de prueba:
+
+```bash
+curl -s -X POST http://192.168.1.196:8888/v1/default/banks/mara-os-diagnostico/memories \
+  -H 'Content-Type: application/json' \
+  -d '{"items":[{"content":"Prueba: al usuario le gusta el verde.","document_id":"diag-1"}],"async":false}'
+```
+
+Tiene que responder `{"success":true,...}`.
 
 Tras arreglarlo, los pendientes se reintentan solos (backoff máximo 15 min).
 Para forzarlo ya:
@@ -100,6 +156,27 @@ const db = require('better-sqlite3')('/app/data/mara.db');
 console.log(db.prepare('UPDATE memory_sync SET next_attempt_at = 0 WHERE completed_at IS NULL').run().changes, 'reprogramados');
 "
 ```
+
+Si el banco se ha recreado vacío (p. ej. al borrar los datos de Hindsight), los
+recuerdos ya marcados como sincronizados no se reenvían solos. Para volver a
+encolar todos los recuerdos locales (salvo los olvidados):
+
+```bash
+docker exec mara-os node -e "
+const db = require('better-sqlite3')('/app/data/mara.db');
+const r = db.prepare(\`
+  INSERT INTO memory_sync (memory_id, document_id, action, attempts, next_attempt_at, created_at)
+  SELECT id, 'mara-' || id, 'retain', 0, 0, ?
+  FROM memories WHERE id NOT IN (SELECT id FROM memory_tombstones)
+  ON CONFLICT(memory_id) DO UPDATE SET
+    action = 'retain', attempts = 0, next_attempt_at = 0,
+    last_error = NULL, completed_at = NULL, failed_permanently_at = NULL
+\`).run(Date.now());
+console.log(r.changes, 'recuerdos en cola');
+"
+```
+
+El `document_id` estable (`mara-<id>`) hace que reenviar sea idempotente.
 
 ## MEMORY.md (legacy)
 
