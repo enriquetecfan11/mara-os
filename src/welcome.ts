@@ -19,6 +19,7 @@ import {
 } from "./config.js"
 import { getActiveLlm } from "./providers.js"
 import { getMcpStatus } from "./mcp.js"
+import { describeToolGroups } from "./tool-groups.js"
 import { isUiEnabled, getConnectedClientCount } from "./events.js"
 import { pingOllama } from "./ollama.js"
 import { checkVoicebox } from "./voicebox.js"
@@ -148,6 +149,7 @@ function describeCommands(): string[] {
     "/help       esta ayuda",
     "/status     fecha, modelo y ficheros de contexto",
     "/modelo     proveedor de inferencia (sin args: estado)",
+    "/tools      on | off | solo <grupo…> (sin args: estado)",
     "/context    contexto de ejecución y memoria",
     "/reset      limpia el historial de la conversación",
     "/cancel     detiene la petición en curso",
@@ -202,6 +204,9 @@ export async function buildWelcomeText(greetName: string = maraUserName, botUser
     "",
     heading("Herramientas (MCP)"),
     ...describeMcp(),
+    "",
+    heading("Grupos de tools"),
+    ...describeToolGroups(),
     "",
     heading("Memoria"),
     ...memoryLines,

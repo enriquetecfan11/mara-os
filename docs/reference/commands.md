@@ -8,6 +8,8 @@
 | `/help` | Muestra el mismo mensaje de bienvenida completo | `bot.ts:219` |
 | `/status` | Muestra estado del sistema (fecha, modelo, archivos de contexto, skills) | `bot.ts:130` |
 | `/modelo` | Estado de los proveedores de inferencia y cuál está activo | `bot.ts` |
+| `/tools` | Estado de los grupos de tools (la memoria siempre activa) | `bot.ts` |
+| `/tools on\|off\|solo <grupo…>` | Activa, desactiva o deja solo esos grupos; se persiste en `data/tool-groups.json` | `bot.ts` |
 | `/modelo <proveedor>` | Prueba que responde y activa `unsloth`, `groq`, `ollama` u `openai` en caliente | `bot.ts` |
 | `/context` | Muestra un resumen estructurado del contexto de ejecución actual | `bot.ts:223` |
 | `/reset` | Limpia el historial de conversación del chat actual | `bot.ts:73` |

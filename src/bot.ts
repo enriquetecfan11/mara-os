@@ -19,6 +19,7 @@ import { transcribeLocal } from "./stt.js"
 import { wavToOggOpus } from "./audio.js"
 import { startUiEvents, closeUiEvents, setState, emitMessage, emitConfirm, emitError, emitSpeakingStarted, emitSpeakingFinished, emitVoiceAudio, setCommandHandler, setAudioHandler, type UiCommand } from "./events.js"
 import { buildWelcomeText, sendWelcome, invalidatePings } from "./welcome.js"
+import { describeToolGroups, setToolGroups } from "./tool-groups.js"
 
 function stripMarkdown(text: string): string {
   return text
@@ -354,6 +355,29 @@ bot.command("modelo", async (ctx) => {
     `Servidor: ${active.url}`,
     `(${ping.detail})`,
   ].join("\n"))
+})
+
+bot.command("tools", async (ctx) => {
+  const [action, ...names] = (ctx.match ?? "").trim().toLowerCase().split(/\s+/).filter(Boolean)
+
+  if (!action) {
+    await ctx.reply(describeToolGroups().join("\n"))
+    return
+  }
+
+  const mode = action === "solo" ? "only" : action
+  if ((mode !== "on" && mode !== "off" && mode !== "only") || names.length === 0) {
+    await ctx.reply("Uso: /tools | /tools on <grupo…> | /tools off <grupo…> | /tools solo <grupo…>")
+    return
+  }
+
+  const result = setToolGroups(names, mode)
+  if (!result.ok) {
+    await ctx.reply(result.reason)
+    return
+  }
+  info("Tools", `/tools ${action} ${names.join(" ")}`)
+  await ctx.reply(describeToolGroups().join("\n"))
 })
 
 bot.command("context", async (ctx) => {

@@ -11,6 +11,8 @@ data/*.db-*
 
 # Proveedor de inferencia elegido con /modelo (estado local de cada máquina)
 data/llm-provider.json
+# Grupos de tools apagados con /tools (estado local de cada máquina)
+data/tool-groups.json
 
 # Pesos de whisper descargados por transformers.js (STT_CACHE_DIR). Hundreds of MB.
 data/models/

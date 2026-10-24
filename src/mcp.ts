@@ -260,6 +260,16 @@ export async function callMcpTool(toolName: string, toolArgs: any): Promise<stri
   return resultStr
 }
 
+/** Servidor MCP que aporta una tool, o undefined si no es de MCP. */
+export function getToolServerName(toolName: string): string | undefined {
+  const client = toolToClientMap.get(toolName)
+  if (!client) return undefined
+  for (const [name, c] of clientsMap) {
+    if (c === client) return name
+  }
+  return undefined
+}
+
 export function getToolsByServer(serverName: string): Array<{ name: string, description: string }> {
   const client = clientsMap.get(serverName)
   if (!client) return []

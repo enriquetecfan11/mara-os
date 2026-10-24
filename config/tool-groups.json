@@ -1,0 +1,15 @@
+{
+  "tareas": [
+    "get_queue", "list_tasks", "get_task", "get_next_task", "claim_task",
+    "create_task", "create_subtask", "update_task", "update_task_status",
+    "comment_task", "add_comment", "append_log", "attach_artifact",
+    "request_approval", "complete_task", "fail_task"
+  ],
+  "notas": [
+    "list_notes", "get_note", "get_note_by_title", "create_note",
+    "update_note", "append_note", "upsert_note", "delete_note"
+  ],
+  "proyectos": ["list_projects", "whoami"],
+  "delegaciones": ["list_delegations", "propose_delegation", "update_delegation"],
+  "ejecuciones": ["start_run", "log_run", "finish_run", "add_artifact"]
+}

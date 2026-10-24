@@ -1,5 +1,6 @@
 import { getActiveLlm } from "./providers.js"
-import { ollamaTools, callMcpTool } from "./mcp.js"
+import { callMcpTool } from "./mcp.js"
+import { getActiveTools, isToolEnabled } from "./tool-groups.js"
 import { loadAllSkills, detectSkills, loadSkillsContext } from "./skills.js"
 import { readContextFile } from "./cache.js"
 import { info, error as logError, debug, warn } from "./logger.js"
@@ -143,7 +144,7 @@ export async function askPi(chatId: number, message: string) {
         body: JSON.stringify(
           llmChatBody({
             messages,
-            tools: ollamaTools,
+            tools: getActiveTools(),
             temperature: 0.3,
             requireTool: true,
           }),
@@ -176,6 +177,12 @@ export async function askPi(chatId: number, message: string) {
             const toolArgs = toolCall.arguments
 
             debug("Tool", `Executing tool "${toolName}" with arguments: ${JSON.stringify(toolArgs)}`)
+
+            // Un grupo apagado con /tools no se envía al LLM, pero el modelo
+            // puede pedir la tool igualmente (alucinación o historial previo).
+            if (!isToolEnabled(toolName)) {
+              return toolResultMessage(toolCall, `Herramienta "${toolName}" desactivada con /tools`)
+            }
 
             try {
               const resultStr = await callMcpTool(toolName, toolArgs)

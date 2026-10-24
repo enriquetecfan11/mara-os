@@ -70,6 +70,28 @@
 que se registran junto a las de MCP y se resuelven contra Hindsight vía
 `MemoryManager`. Ver [Gestión de memoria](../operations/memory-management.md#tools-del-llm).
 
+## Grupos de tools (`/tools`)
+
+`config/tool-groups.json` agrupa las tools por tema para activarlas o
+desactivarlas desde Telegram sin reiniciar:
+
+```json
+{
+  "tareas": ["create_task", "list_tasks", "..."],
+  "notas": ["create_note", "get_note", "..."]
+}
+```
+
+- Se relee en cada petición: editarlo no requiere reiniciar.
+- Una tool de MCP que no esté en ningún grupo cae en un grupo con el nombre de
+  su servidor (p. ej. `agentdesk`), así que nunca desaparece sin avisar.
+- `memoria` es un nombre reservado: `guardar_recuerdo` y `buscar_recuerdos`
+  siempre se envían al LLM y no se pueden desactivar.
+- Los grupos apagados se guardan en `data/tool-groups.json`
+  (`TOOL_GROUPS_STATE_FILE`). Por defecto todos están activos.
+- Si el modelo pide una tool de un grupo apagado, recibe
+  `Herramienta "<nombre>" desactivada con /tools` en vez de ejecutarse.
+
 ## Añadir un Nuevo Servidor
 
 1. Añade una entrada en `mcp.json`

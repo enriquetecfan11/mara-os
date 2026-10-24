@@ -41,7 +41,9 @@ pnpm reset-memory     # Restore MEMORY.md to git state
   - `readContextFile()`: Reads file from disk once, caches in memory. On subsequent reads, checks mtime; if unchanged, returns cached content. Automatically invalidates when file changes.
   - Reduces per-request latency: 40-60ms (5 file reads) → 1ms (cache hits)
 
-- **bot.ts**: Telegram bot handler. Commands: `/start`, `/help`, `/status`, `/modelo`, `/reset`, `/skill`. `/start` and `/help` render the shared long welcome message built in `welcome.ts` (live system status + states + command catalogue). `/modelo [proveedor]` lists the inference providers or switches the active one at runtime (pings the candidate first). Message handler orchestrates approval checks and calls to `askPi()`.
+- **bot.ts**: Telegram bot handler. Commands: `/start`, `/help`, `/status`, `/modelo`, `/tools`, `/reset`, `/skill`. `/start` and `/help` render the shared long welcome message built in `welcome.ts` (live system status + states + command catalogue). `/modelo [proveedor]` lists the inference providers or switches the active one at runtime (pings the candidate first). Message handler orchestrates approval checks and calls to `askPi()`.
+
+- **tool-groups.ts**: tool groups toggled with `/tools`. Groups come from `config/tool-groups.json` (name → tool list, re-read on every call); an MCP tool in no group falls into a group named after its server. `getActiveTools()` is what `askPi()` sends to the LLM and always includes the memory tools from `memory-tools.ts` (`guardar_recuerdo`, `buscar_recuerdos`): memory cannot be disabled. Disabled groups persist to `data/tool-groups.json` (`TOOL_GROUPS_STATE_FILE`).
 
 - **providers.ts**: runtime inference provider state. `getActiveLlm()` (stored choice → `LLM_PROVIDER` → derived from `OLLAMA_API`), `setActiveProvider()` (validates config, resolves and persists to `data/llm-provider.json`), `listProviderStatus()` (for `/modelo`).
   - **Graceful shutdown**: Listens for SIGINT (Ctrl+C) and SIGTERM signals. Closes MCP clients cleanly (prevents unhandled errors from child processes), then stops bot without errors.

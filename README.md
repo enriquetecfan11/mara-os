@@ -148,6 +148,23 @@ comprueba que el modelo configurado está disponible; si no responde, no cambia
 nada y explica por qué. La elección se guarda en `data/llm-provider.json`, así
 que sobrevive a los reinicios. `LLM_PROVIDER` es solo el valor inicial.
 
+## Activar y desactivar herramientas
+
+Las tools de MCP se agrupan por tema en `config/tool-groups.json` (tareas,
+notas, proyectos, delegaciones, ejecuciones). Desde Telegram:
+
+```
+/tools                     → estado de cada grupo y tools activas
+/tools off ejecuciones     → deja de enviar ese grupo al LLM
+/tools on ejecuciones      → lo vuelve a activar
+/tools solo tareas notas   → deja activos solo esos grupos
+```
+
+La memoria (`guardar_recuerdo`, `buscar_recuerdos`, Hindsight) está siempre
+activa: `/tools off memoria` se rechaza. El estado se guarda en
+`data/tool-groups.json` y sobrevive a los reinicios. Menos tools activas = menos
+contexto y mejor elección de tool con modelos pequeños.
+
 ## Diagnóstico
 
 | Comando | Qué hace |
