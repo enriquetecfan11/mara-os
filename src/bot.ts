@@ -20,6 +20,7 @@ import { wavToOggOpus } from "./audio.js"
 import { startUiEvents, closeUiEvents, setState, emitMessage, emitConfirm, emitError, emitSpeakingStarted, emitSpeakingFinished, emitVoiceAudio, setCommandHandler, setAudioHandler, type UiCommand } from "./events.js"
 import { buildWelcomeText, sendWelcome, invalidatePings } from "./welcome.js"
 import { describeToolGroups, setToolGroups } from "./tool-groups.js"
+import { searchNotes } from "./memory-tools.js"
 
 function stripMarkdown(text: string): string {
   return text
@@ -536,6 +537,24 @@ bot.command("memory", async (ctx) => {
     }
   } catch (err: any) {
     await ctx.reply(`Error al consultar memoria: ${err.message}`)
+  } finally {
+    stopTyping(typing)
+  }
+})
+
+// Busca en el banco de Obsidian sin pasar por el modelo.
+bot.command("notas", async (ctx) => {
+  const query = (ctx.match ?? "").trim()
+  if (!query) {
+    await ctx.reply("Uso: /notas <qué buscar>")
+    return
+  }
+
+  const typing = startTyping(ctx.chat.id)
+  try {
+    await ctx.reply(await searchNotes(query))
+  } catch (err: any) {
+    await ctx.reply(`Error al buscar en las notas: ${err.message}`)
   } finally {
     stopTyping(typing)
   }

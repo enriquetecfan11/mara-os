@@ -110,6 +110,34 @@ export async function saveMemory(content: string, type: MemoryType = "other", im
     : `Guardado en Hindsight (id ${entry.id}).`
 }
 
+/**
+ * Busca en el banco de notas de Obsidian y devuelve un fragmento por nota.
+ * La usan la tool `buscar_en_notas` y el comando `/notas`.
+ */
+export async function searchNotes(query: string, limit = 5): Promise<string> {
+  if (!hindsightEnabled) return "Las notas de Obsidian no están disponibles: Hindsight está desactivado."
+
+  // El banco está en modo "chunks": cada resultado es un trozo de nota de
+  // varios KB. Se piden de sobra, se deja uno por nota (el más relevante) y se
+  // recorta, para que el modelo vea varias notas distintas sin llenar el contexto.
+  const result = await getNotesStore().search({ query, limit: 20, maxTokens: NOTES_RECALL_TOKENS })
+  const byNote = new Map<string, string>()
+  for (const e of result.entries) {
+    const docId = String(e.metadata?.documentId ?? "")
+    const note = docId.startsWith("obsidian:") ? docId.slice("obsidian:".length) : docId || e.id
+    if (!byNote.has(note)) byNote.set(note, e.content)
+    if (byNote.size >= limit) break
+  }
+  if (byNote.size === 0) return "No hay nada sobre eso en las notas de Obsidian."
+  return [...byNote]
+    .map(([note, text]) => {
+      const snippet = text.replace(/\s+/g, " ").trim()
+      const cut = snippet.length > NOTE_SNIPPET_CHARS ? `${snippet.slice(0, NOTE_SNIPPET_CHARS)}…` : snippet
+      return `Nota "${note}":\n${cut}`
+    })
+    .join("\n\n")
+}
+
 // "recuerda que…", "apunta…", "no olvides que…". No incluye "recuérdame",
 // que suele ser un recordatorio (una tarea), no un dato que memorizar.
 const REMEMBER_REQUEST =
@@ -150,31 +178,11 @@ const handlers: Record<string, (args: any) => Promise<string>> = {
   },
 
   async buscar_en_notas(args) {
-    if (!hindsightEnabled) return "Las notas de Obsidian no están disponibles: Hindsight está desactivado."
     const query = String(args?.consulta ?? "").trim()
     if (!query) throw new Error("Falta 'consulta'")
     const raw = Number(args?.limite)
     const limit = Number.isFinite(raw) ? Math.max(1, Math.min(SEARCH_LIMIT_MAX, Math.trunc(raw))) : 5
-
-    // El banco está en modo "chunks": cada resultado es un trozo de nota de
-    // varios KB. Se piden de sobra, se deja uno por nota (el más relevante) y se
-    // recorta, para que el modelo vea varias notas distintas sin llenar el contexto.
-    const result = await getNotesStore().search({ query, limit: 20, maxTokens: NOTES_RECALL_TOKENS })
-    const byNote = new Map<string, string>()
-    for (const e of result.entries) {
-      const docId = String(e.metadata?.documentId ?? "")
-      const note = docId.startsWith("obsidian:") ? docId.slice("obsidian:".length) : docId || e.id
-      if (!byNote.has(note)) byNote.set(note, e.content)
-      if (byNote.size >= limit) break
-    }
-    if (byNote.size === 0) return "No hay nada sobre eso en las notas de Obsidian."
-    return [...byNote]
-      .map(([note, text]) => {
-        const snippet = text.replace(/\s+/g, " ").trim()
-        const cut = snippet.length > NOTE_SNIPPET_CHARS ? `${snippet.slice(0, NOTE_SNIPPET_CHARS)}…` : snippet
-        return `Nota "${note}":\n${cut}`
-      })
-      .join("\n\n")
+    return searchNotes(query, limit)
   },
 }
 

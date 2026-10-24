@@ -154,6 +154,7 @@ function describeCommands(): string[] {
     "/reset      limpia el historial de la conversación",
     "/cancel     detiene la petición en curso",
     "/memory     <texto> | list | forget <id>",
+    "/notas      <texto> (busca en tus notas de Obsidian)",
     "/skill      lista | <nombre> | recargar",
     "/voz        on | off (salida de voz)",
     "/feedback   <texto> (tu opinión sobre el bot)",
