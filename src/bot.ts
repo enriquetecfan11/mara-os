@@ -209,13 +209,13 @@ bot.catch(async (err) => {
 })
 
 bot.command("start", async (ctx) => {
-  clearChatHistory(ctx.chat.id)
+  await clearChatHistory(ctx.chat.id)
   const welcome = await buildWelcomeText(ctx.from?.first_name || maraUserName)
   await sendWelcome(ctx.chat.id, welcome, (id, text) => bot.api.sendMessage(id, text))
 })
 
 bot.command("reset", async (ctx) => {
-  clearChatHistory(ctx.chat.id)
+  await clearChatHistory(ctx.chat.id)
   await ctx.reply("Historial limpio. Empezamos de cero.")
 })
 

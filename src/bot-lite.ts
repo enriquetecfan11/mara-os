@@ -126,13 +126,13 @@ bot.catch(async (err) => {
 })
 
 bot.command("start", async (ctx) => {
-  clearChatHistory(ctx.chat.id)
+  await clearChatHistory(ctx.chat.id)
   const name = ctx.from?.first_name || "there"
   await ctx.reply(`Hola ${name}! Soy Mara, tu asistente personal.\n\nPuedo ayudarte con preguntas, tareas y mas.\nEscribe /help para ver todo lo que puedo hacer.`)
 })
 
 bot.command("reset", async (ctx) => {
-  clearChatHistory(ctx.chat.id)
+  await clearChatHistory(ctx.chat.id)
   await ctx.reply("Historial limpio. Empezamos de cero.")
 })
 

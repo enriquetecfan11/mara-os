@@ -48,8 +48,11 @@ const MAX_CONVERSATION_TOKENS = 6000
 const MAX_MEMORY_TOKENS = 1500
 const MEMORY_SEARCH_LIMIT = 5
 
-export function clearChatHistory(chatId: number) {
+export async function clearChatHistory(chatId: number): Promise<void> {
   chatSessions.delete(chatId)
+  // El historial que ve el LLM sale de SQLite (buildContext), no de chatSessions:
+  // sin esto /reset no borraba nada. La memoria a largo plazo no se toca.
+  await getMemoryManager().clearConversation(chatId)
   info("Ollama", `Chat session cleared for chat ${chatId}`)
 }
 
