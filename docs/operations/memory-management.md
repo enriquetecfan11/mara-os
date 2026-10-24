@@ -278,22 +278,28 @@ pnpm import:obsidian ~/Documents/obisidian-vault                            # to
   frontmatter se quita.
 - Se ejecuta donde está el vault (el Mac) contra el Hindsight de la LAN.
 
-### Coste: usar un LLM local para el retain
+### Modo `chunks`: sin LLM ni tokens
 
-Cada nota pasa por el LLM de extracción de Hindsight (~3000 tokens de prompt
-por fragmento). Un vault entero agota rápido el plan gratuito de Groq. Para
-que el **retain** use el servidor local (Unsloth) y lo demás siga en Groq, en
-el `.env` del servidor Hindsight:
+El script configura el banco con `retain_extraction_mode: "chunks"`: Hindsight
+guarda cada nota troceada tal cual y la busca con embeddings locales + texto,
+**sin llamar a ningún LLM**. Importar el vault entero no gasta tokens de Groq,
+tarda ~2 s por nota y conserva el texto original (no hechos sueltos).
 
-```env
-HINDSIGHT_API_RETAIN_LLM_PROVIDER=openai
-HINDSIGHT_API_RETAIN_LLM_BASE_URL=http://192.168.1.79:8888/v1
-HINDSIGHT_API_RETAIN_LLM_API_KEY=<OLLAMA_API_KEY de Mara>
-HINDSIGHT_API_RETAIN_LLM_MODEL=unsloth/Qwen3.5-4B-MTP-GGUF
-HINDSIGHT_API_LLM_STRICT_SCHEMA_RETAIN=true
-```
+Observaciones, grafo y recuperación temporal dependen de hechos extraídos por
+el LLM, así que se apagan en ese banco. El **reranker también**: es local pero
+en CPU sube cada búsqueda de ~0,2 s a ~10 s, más que el timeout de las tools.
 
-El retain es de todo el servidor, no por banco: los recuerdos de Mara también
-se extraerán con el modelo local. `STRICT_SCHEMA_RETAIN` fuerza JSON válido con
-gramática, necesario con modelos pequeños.
+`buscar_en_notas` pide unos 8000 tokens de candidatos, se queda con el trozo
+más relevante de cada nota (hasta 5 notas distintas) y recorta cada uno a 700
+caracteres: unos 3,5 KB por búsqueda, asumible para un modelo pequeño.
 
+El banco de memoria personal (`mara-os`) sigue en el modo normal, con
+extracción de hechos por LLM.
+
+### PDF, DOCX y otros ficheros
+
+Hindsight también acepta ficheros (`POST /v1/default/banks/{bank}/files/retain`,
+multipart): PDF, DOCX, PPTX, XLSX, imágenes con OCR y audio. Los convierte a
+Markdown y los guarda como un documento más; en un banco en modo `chunks`
+tampoco gastan LLM. El vault actual no tiene ficheros de ese tipo, así que el
+script solo importa `.md`.

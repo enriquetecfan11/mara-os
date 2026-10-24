@@ -73,13 +73,16 @@ export const memoryToolSchemas = [
         type: "object",
         properties: {
           consulta: { type: "string", description: "Qué buscar, en lenguaje natural." },
-          limite: { type: "number", description: `Máximo de resultados (1-${SEARCH_LIMIT_MAX}). Por defecto 8.` },
+          limite: { type: "number", description: `Máximo de notas distintas (1-${SEARCH_LIMIT_MAX}). Por defecto 5.` },
         },
         required: ["consulta"],
       },
     },
   },
 ]
+
+const NOTES_RECALL_TOKENS = 8000
+const NOTE_SNIPPET_CHARS = 700
 
 // Las notas viven en un banco aparte y solo se leen: no pasan por el
 // MemoryManager (ni SQLite ni outbox), se consulta Hindsight directamente.
@@ -151,17 +154,27 @@ const handlers: Record<string, (args: any) => Promise<string>> = {
     const query = String(args?.consulta ?? "").trim()
     if (!query) throw new Error("Falta 'consulta'")
     const raw = Number(args?.limite)
-    const limit = Number.isFinite(raw) ? Math.max(1, Math.min(SEARCH_LIMIT_MAX, Math.trunc(raw))) : 8
+    const limit = Number.isFinite(raw) ? Math.max(1, Math.min(SEARCH_LIMIT_MAX, Math.trunc(raw))) : 5
 
-    const result = await getNotesStore().search({ query, limit, maxTokens: 3000 })
-    if (result.entries.length === 0) return "No hay nada sobre eso en las notas de Obsidian."
-    return result.entries
-      .map((e) => {
-        const docId = String(e.metadata?.documentId ?? "")
-        const note = docId.startsWith("obsidian:") ? ` (nota: ${docId.slice("obsidian:".length)})` : ""
-        return `- ${e.content}${note}`
+    // El banco está en modo "chunks": cada resultado es un trozo de nota de
+    // varios KB. Se piden de sobra, se deja uno por nota (el más relevante) y se
+    // recorta, para que el modelo vea varias notas distintas sin llenar el contexto.
+    const result = await getNotesStore().search({ query, limit: 20, maxTokens: NOTES_RECALL_TOKENS })
+    const byNote = new Map<string, string>()
+    for (const e of result.entries) {
+      const docId = String(e.metadata?.documentId ?? "")
+      const note = docId.startsWith("obsidian:") ? docId.slice("obsidian:".length) : docId || e.id
+      if (!byNote.has(note)) byNote.set(note, e.content)
+      if (byNote.size >= limit) break
+    }
+    if (byNote.size === 0) return "No hay nada sobre eso en las notas de Obsidian."
+    return [...byNote]
+      .map(([note, text]) => {
+        const snippet = text.replace(/\s+/g, " ").trim()
+        const cut = snippet.length > NOTE_SNIPPET_CHARS ? `${snippet.slice(0, NOTE_SNIPPET_CHARS)}…` : snippet
+        return `Nota "${note}":\n${cut}`
       })
-      .join("\n")
+      .join("\n\n")
   },
 }
 

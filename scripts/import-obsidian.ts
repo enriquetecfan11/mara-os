@@ -2,6 +2,10 @@
  * Importa un vault de Obsidian al banco de notas de Hindsight
  * (HINDSIGHT_NOTES_BANK_ID, por defecto "obsidian").
  *
+ * El banco se configura en modo "chunks": Hindsight guarda el texto de cada nota
+ * troceado tal cual y lo busca con embeddings + texto, SIN pasar por ningún LLM.
+ * Importar el vault entero no gasta tokens y conserva el texto original.
+ *
  * Cada nota es un documento con document_id "obsidian:<ruta>", así que
  * reimportar reemplaza la nota en vez de duplicarla. Las notas que no han
  * cambiado desde la última importación se saltan (data/obsidian-import.json).
@@ -63,16 +67,46 @@ function saveState(state: Record<string, string>): void {
   writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`)
 }
 
+const bankUrl = `${hindsightApiUrl.replace(/\/+$/, "")}/v1/${encodeURIComponent(hindsightTenant)}/banks/${encodeURIComponent(hindsightNotesBankId)}`
+
+function headers(): Record<string, string> {
+  const h: Record<string, string> = { "Content-Type": "application/json", Accept: "application/json" }
+  if (hindsightApiKey) h.Authorization = `Bearer ${hindsightApiKey}`
+  return h
+}
+
+/**
+ * Crea o actualiza el banco en modo "chunks" (sin LLM). Observaciones, grafo y
+ * recuperación temporal dependen de hechos extraídos por el LLM, así que se
+ * apagan. El reranker también: en CPU sube cada búsqueda de ~0,2 s a ~10 s, más
+ * que el timeout de las tools de Mara.
+ */
+async function ensureChunksBank(): Promise<void> {
+  const res = await fetch(bankUrl, {
+    method: "PUT",
+    headers: headers(),
+    signal: AbortSignal.timeout(30_000),
+    body: JSON.stringify({
+      name: hindsightNotesBankId,
+      retain_extraction_mode: "chunks",
+      enable_observations: false,
+      enable_text_search: true,
+      enable_temporal_retrieval: false,
+      enable_graph_retrieval: false,
+      enable_reranking: false,
+    }),
+  })
+  if (!res.ok) throw new Error(`No se pudo configurar el banco: HTTP ${res.status} ${(await res.text()).slice(0, 300)}`)
+}
+
 async function retain(note: VaultNote): Promise<void> {
-  const url = `${hindsightApiUrl.replace(/\/+$/, "")}/v1/${encodeURIComponent(hindsightTenant)}/banks/${encodeURIComponent(hindsightNotesBankId)}/memories`
-  const headers: Record<string, string> = { "Content-Type": "application/json", Accept: "application/json" }
-  if (hindsightApiKey) headers.Authorization = `Bearer ${hindsightApiKey}`
+  const url = `${bankUrl}/memories`
   const folder = note.path.includes("/") ? note.path.split("/")[0] : "raiz"
 
   for (let attempt = 1; ; attempt++) {
     const res = await fetch(url, {
       method: "POST",
-      headers,
+      headers: headers(),
       signal: AbortSignal.timeout(RETAIN_TIMEOUT_MS),
       body: JSON.stringify({
         async: false,
@@ -115,6 +149,8 @@ async function main(): Promise<void> {
     console.log("\n--dry-run: no se ha enviado nada.")
     return
   }
+
+  await ensureChunksBank()
 
   let ok = 0
   const failed: string[] = []
