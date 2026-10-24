@@ -28,13 +28,15 @@ Ollama ──▶ mcp.ts ──▶ toolToClientMap (name → Client)
 
 ## Servidores MCP
 
-Actualmente hay 4 servidores configurados en `mcp.json`:
+Actualmente hay 1 servidor configurado en `mcp.json`:
 
 | Servidor | Tipo | Propósito | Tools |
 |---|---|---|---|
-| macos_automator | stdio | Automatización del Mac | execute_script, get_scripting_tips |
-| calendar | HTTP | Google Calendar (via n8n) | CRUD eventos + disponibilidad |
-| notes | HTTP | Notas y tareas (via n8n) | CRUD tareas |
+| agentdesk | HTTP + Bearer | Tareas, notas y delegaciones de AgentDesk | 33 tools (create_task, list_notes, …) |
+
+Además, `initMcpClients()` registra siempre las tools nativas de memoria
+`guardar_recuerdo` y `buscar_recuerdos` (`src/memory-tools.ts`). `callMcpTool()`
+las resuelve contra `MemoryManager` (Hindsight) antes de buscar un cliente MCP.
 
 ## Despacho de Tools (callMcpTool)
 

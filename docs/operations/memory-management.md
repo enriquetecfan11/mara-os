@@ -33,6 +33,20 @@ HINDSIGHT_BANK_ID=mara-os
 
 El panel (`:9999`) no lo usa el bot; todo va por la API (`:8888`).
 
+### Servidor Hindsight con Groq
+
+Hindsight ejecuta su propio LLM para extraer hechos en cada `retain`. Si usa
+Groq (`HINDSIGHT_API_LLM_PROVIDER=groq`), por defecto pide
+`service_tier: auto`, que el plan gratuito de Groq no admite. Configura el
+contenedor de **Hindsight** (no el de Mara) con:
+
+```env
+HINDSIGHT_API_LLM_GROQ_SERVICE_TIER=on_demand
+```
+
+y recréalo con `docker compose up -d`: `restart` no recarga las variables.
+Comprueba que la tiene con `docker exec mara-hindsight env | grep SERVICE_TIER`.
+
 ## Verificar antes de arrancar
 
 ```bash
@@ -53,11 +67,56 @@ sincronizar). Sale con 0 si todo está bien.
 
 No se pierde ni se duplica: el `document_id` estable hace el retain idempotente.
 
+## Hindsight responde pero la outbox no se vacía
+
+Síntoma: `pnpm check:hindsight` da salud y `recall` correctos pero
+`❌ Outbox: N cambios esperando`, `total_documents` se queda en 0 y `/help`
+muestra `Hindsight: ❌ no responde` a ratos (justo después de cada respuesta,
+cuando el extractor intenta guardar y el fallo abre el circuito 30 s).
+
+El error real queda en la outbox:
+
+```bash
+docker exec mara-os node -e "
+const db = require('better-sqlite3')('/app/data/mara.db', { readonly: true });
+console.table(db.prepare('SELECT memory_id, attempts, last_error FROM memory_sync WHERE completed_at IS NULL').all());
+"
+```
+
+- `Hindsight HTTP 500: Fact extraction failed ... service_tier auto is not
+  available for this org`: falta `HINDSIGHT_API_LLM_GROQ_SERVICE_TIER=on_demand`
+  en el servidor (ver [Servidor Hindsight con Groq](#servidor-hindsight-con-groq)).
+- Otro `HTTP 500`: mira los logs del contenedor de Hindsight; suele ser su LLM.
+- `timeout` / `aborted`: el retain tarda más que `HINDSIGHT_RETAIN_TIMEOUT_MS`.
+- `Hindsight en circuito abierto por fallo reciente`: consecuencia de otro
+  fallo, no la causa; busca la fila con el error real.
+
+Tras arreglarlo, los pendientes se reintentan solos (backoff máximo 15 min).
+Para forzarlo ya:
+
+```bash
+docker exec mara-os node -e "
+const db = require('better-sqlite3')('/app/data/mara.db');
+console.log(db.prepare('UPDATE memory_sync SET next_attempt_at = 0 WHERE completed_at IS NULL').run().changes, 'reprogramados');
+"
+```
+
 ## MEMORY.md (legacy)
 
 `config/MEMORY.md` ya no recibe recuerdos dinámicos. Con Hindsight activo, la
 migración automática a SQLite se omite a propósito para no duplicar contenido.
 Las filas antiguas de `memories` tampoco se envían solas a Hindsight.
+
+## Tools del LLM
+
+Además de la extracción automática, Mara tiene dos tools nativas
+(`src/memory-tools.ts`), que no pasan por ningún servidor MCP:
+
+- `guardar_recuerdo` (`contenido`, `tipo?`, `importancia?`): guarda con
+  `source: "manual"` vía `MemoryManager.remember()`.
+- `buscar_recuerdos` (`consulta`, `limite?`): `MemoryManager.search()`.
+
+Usan el mismo `MemoryManager` que el resto: Hindsight con espejo SQLite y outbox.
 
 ## Comandos
 

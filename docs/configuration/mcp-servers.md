@@ -6,13 +6,11 @@
 {
   "servers": [
     {
-      "name": "macos_automator",
-      "type": "stdio",
-      "command": "${NPX_PATH:-/opt/homebrew/bin/npx}",
-      "args": ["-y", "--package", "@steipete/macos-automator-mcp", "macos-automator-mcp"]
-    },
-    { "name": "calendar", "type": "http", "url": "${CALENDAR_MCP_URL:-https://core-n8n.832gky.easypanel.host/mcp/calendar}" },
-    { "name": "notes", "type": "http", "url": "${NOTES_MCP_URL:-https://core-n8n.832gky.easypanel.host/mcp/agents-notes}" }
+      "name": "agentdesk",
+      "type": "http",
+      "url": "${AGENTDESK_MCP_URL:-http://192.168.1.196:3000/api/mcp}",
+      "headers": { "Authorization": "Bearer ${AGENTDESK_MCP_TOKEN}" }
+    }
   ]
 }
 ```
@@ -54,29 +52,23 @@
 | `name` | Identificador único del servidor | Sí |
 | `type` | `"http"` para conexiones HTTP | Sí |
 | `url` | URL del endpoint MCP | Sí |
+| `headers` | Cabeceras extra (p. ej. `Authorization`). Admiten `${VAR}` para no guardar secretos en el repo | No |
 
 ## Servidores Actuales
 
-### macOS Automator
+### AgentDesk
 
-- **Tipo**: stdio
-- **Tecnología**: @steipete/macos-automator-mcp
-- **Propósito**: Automatización del Mac mediante AppleScript/JXA
-- **Tools**: `execute_script`, `get_scripting_tips`
+- **Tipo**: HTTP (streamable)
+- **URL**: `AGENTDESK_MCP_URL` (por defecto `http://192.168.1.196:3000/api/mcp`, el homelab)
+- **Auth**: `Authorization: Bearer ${AGENTDESK_MCP_TOKEN}`. El token va en `.env`, nunca en `mcp.json`.
+- **Propósito**: tareas, notas, proyectos y delegaciones del espacio de trabajo de AgentDesk
+- **Tools**: whoami, get_queue, create_task, update_task, list_tasks, get_task, list_notes, get_note, create_note, upsert_note, … (33 en total)
 
-### Calendar (Google Calendar via n8n)
+### Memoria (no es MCP)
 
-- **Tipo**: HTTP
-- **URL**: `https://core-n8n.832gky.easypanel.host/mcp/calendar`
-- **Propósito**: Gestión del calendario de Google de Kike
-- **Tools**: Get_all_Events, Create_an_event, Reschedule_Event, Delete_Calendar_Event, Check_Availability
-
-### Notes (notas y tareas via n8n)
-
-- **Tipo**: HTTP
-- **URL**: `https://core-n8n.832gky.easypanel.host/mcp/agents-notes`
-- **Propósito**: Gestión de notas y tareas
-- **Tools**: Create_a_Task, Get_a_Task, Get_many_Tasks, Delete_a_Task, Complete_a_Task
+`guardar_recuerdo` y `buscar_recuerdos` son tools nativas (`src/memory-tools.ts`)
+que se registran junto a las de MCP y se resuelven contra Hindsight vía
+`MemoryManager`. Ver [Gestión de memoria](../operations/memory-management.md#tools-del-llm).
 
 ## Añadir un Nuevo Servidor
 

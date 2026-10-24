@@ -9,7 +9,9 @@ Mara OS separa dos cosas:
   como espejo local y respaldo.
 
 La extracción y la búsqueda son automáticas y deterministas: no dependen de que
-el LLM decida cuándo llamar a una tool.
+el LLM decida cuándo llamar a una tool. Además, el LLM tiene las tools
+`guardar_recuerdo` y `buscar_recuerdos` (`src/memory-tools.ts`) para guardar o
+consultar a petición del usuario.
 
 ```
                       ┌──────────────────────────────┐
@@ -151,6 +153,11 @@ mismo documento, no crea un duplicado.
 - `HINDSIGHT_HEALTH_TIMEOUT_MS` (2,5 s): salud y banco al arrancar.
 - Un fallo de red/5xx abre el circuito 30 s: durante ese tiempo se usa SQLite
   sin seguir golpeando el servidor.
+- Un `retain` que falla en el servidor (p. ej. su LLM de extracción) también
+  cuenta como 5xx: `/help` mostrará `Hindsight: ❌` durante esos 30 s aunque
+  `/health` responda. Si Hindsight usa Groq en plan gratuito, necesita
+  `HINDSIGHT_API_LLM_GROQ_SERVICE_TIER=on_demand`; ver
+  [Gestión de memoria](operations/memory-management.md#hindsight-responde-pero-la-outbox-no-se-vacía).
 
 ---
 

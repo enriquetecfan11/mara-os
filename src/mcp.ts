@@ -5,11 +5,11 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { McpServerConfig, McpConfig, hindsightEnabled, hindsightBankId } from "./config.js"
 import { info, error as logError, debug, warn } from "./logger.js"
+import { memoryToolSchemas, isMemoryTool, callMemoryTool } from "./memory-tools.js"
 
 const SERVER_CONNECT_TIMEOUT_MS = 15_000
 
 // Env MCP opcional: desactiva servidores por nombre sin tocar mcp.json.
-// Útil en la Raspberry Pi, donde macos_automator no puede funcionar (manda AppleScript).
 const disabledMcpServers = new Set(
   (process.env.MCP_DISABLED_SERVERS || "")
     .split(",")
@@ -96,6 +96,7 @@ function buildTransport(server: McpServerConfig) {
       signal: AbortSignal.timeout(SERVER_CONNECT_TIMEOUT_MS),
       headers: {
         "Accept": "application/json, text/event-stream",
+        ...server.headers,
       },
     },
   })
@@ -163,6 +164,11 @@ async function connectServer(server: McpServerConfig): Promise<{ server: McpServ
 }
 
 export async function initMcpClients() {
+  // Tools nativas de memoria (Hindsight vía MemoryManager): no dependen de mcp.json.
+  if (!ollamaTools.some((tool) => isMemoryTool(tool.function.name))) {
+    ollamaTools.push(...memoryToolSchemas)
+  }
+
   try {
     const mcpConfigPath = join(process.cwd(), "mcp.json")
     const mcpConfigContent = await readFile(mcpConfigPath, "utf8")
@@ -227,6 +233,9 @@ export async function initMcpClients() {
 }
 
 export async function callMcpTool(toolName: string, toolArgs: any): Promise<string> {
+  if (isMemoryTool(toolName)) {
+    return callMemoryTool(toolName, toolArgs)
+  }
   const client = toolToClientMap.get(toolName)
   if (!client) {
     throw new Error(`Tool "${toolName}" client not found`)

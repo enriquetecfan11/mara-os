@@ -57,7 +57,7 @@ En **Raspberry Pi** hace falta además **Raspberry Pi OS de 64 bits**: tanto `be
    VOICEBOX_ENABLED=false
    VOICEBOX_PROFILE=Mara
    TELEGRAM_SEND_VOICE=false
-   MCP_DISABLED_SERVERS=macos_automator
+   AGENTDESK_MCP_TOKEN=agt_...
    MARA_BRAIN_WS_URL=ws://0.0.0.0:9000
    HINDSIGHT_ENABLED=true
    HINDSIGHT_API_URL=http://192.168.1.196:8888
@@ -86,7 +86,8 @@ En **Raspberry Pi** hace falta además **Raspberry Pi OS de 64 bits**: tanto `be
 - **`VOICEBOX_ENABLED`**: Habilita síntesis de voz (`true`/`false`, default: `false`).
 - **`VOICEBOX_PROFILE`**: Nombre del perfil de voz en Voicebox (default: `Mara`).
 - **`TELEGRAM_SEND_VOICE`**: Envía audio por defecto en nuevos chats (`true`/`false`, default: `false`). Se puede alternar por chat con `/voz on|off`.
-- **`MCP_DISABLED_SERVERS`**: Servidores MCP a desactivar, separados por comas. En una Raspberry Pi hay que poner `macos_automator`: depende de AppleScript y no puede funcionar fuera de macOS.
+- **`MCP_DISABLED_SERVERS`**: Servidores MCP a desactivar, separados por comas, sin tocar `mcp.json`.
+- **`AGENTDESK_MCP_URL`** / **`AGENTDESK_MCP_TOKEN`**: endpoint y token Bearer del MCP de AgentDesk. El token solo va en `.env`.
 - **`MCP_MEMORY_SERVERS`**: Servidores MCP que cuentan como backend de memoria, separados por comas. Vacío por defecto: la memoria la gestiona el bot (Hindsight + SQLite) sin depender de ningún MCP.
 - **`HINDSIGHT_ENABLED`**: Activa Hindsight como memoria principal (`true`/`false`, default: `false`). Ausente = solo SQLite, como antes.
 - **`HINDSIGHT_API_URL`**: URL de la API de Hindsight (default: `http://192.168.1.196:8888`). El panel web (`:9999`) no se usa desde el bot.
@@ -183,7 +184,6 @@ pnpm bench:stt Xenova/whisper-small
 - **64 bits obligatorio.** `better-sqlite3` y `onnxruntime-node` publican `linux-arm64` dentro del paquete de npm; no existe build de 32 bits.
 - **Whisper local no es viable.** En una Pi 5, `whisper-tiny` tarda ~5 s en 5 s de audio y `whisper-large-v3-turbo` ~68 s. Los modelos que transcriben bien no llegan a tiempo, así que lo razonable es `STT_ENABLED=false` y delegar en Voicebox si está disponible.
 - **Espacio en la SD.** La dependencia `@xenova/transformers` ocupa ~183 MB en `node_modules` aunque el STT esté apagado (los binarios nativos vienen para todas las plataformas). Con STT activo, los pesos se guardan en `STT_CACHE_DIR`.
-- **`macos_automator` no puede funcionar.** Ponlo en `MCP_DISABLED_SERVERS`; si no, solo aporta tools muertas al contexto del LLM.
 - `data/` (base de datos), `data/models/` y `config/uploads/` se crean solas en runtime.
 
 ## Integración con Mara UI

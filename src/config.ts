@@ -4,6 +4,8 @@ export interface McpServerConfig {
   name: string
   type?: "http" | "stdio"
   url?: string
+  /** Cabeceras extra para servidores http (admite ${VAR}, p. ej. un Bearer). */
+  headers?: Record<string, string>
   command?: string
   args?: string[]
   env?: Record<string, string>

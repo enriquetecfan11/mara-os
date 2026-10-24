@@ -1,12 +1,10 @@
 {
   "servers": [
     {
-      "name": "macos_automator",
-      "type": "stdio",
-      "command": "${NPX_PATH:-/opt/homebrew/bin/npx}",
-      "args": ["-y", "--package", "@steipete/macos-automator-mcp", "macos-automator-mcp"]
-    },
-    { "name": "calendar", "type": "http", "url": "${CALENDAR_MCP_URL:-https://core-n8n.832gky.easypanel.host/mcp/calendar}" },
-    { "name": "notes", "type": "http", "url": "${NOTES_MCP_URL:-https://core-n8n.832gky.easypanel.host/mcp/agents-notes}" }
+      "name": "agentdesk",
+      "type": "http",
+      "url": "${AGENTDESK_MCP_URL:-http://192.168.1.196:3000/api/mcp}",
+      "headers": { "Authorization": "Bearer ${AGENTDESK_MCP_TOKEN}" }
+    }
   ]
 }

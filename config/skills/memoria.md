@@ -1,11 +1,12 @@
 ---
 name: memoria
-keywords: [recuerda, recordar, guardar, memoria, remember, save, dato, informacion]
+keywords: [recuerda, recordar, recuerdas, guardar, guarda, memoria, remember, save, dato, informacion, apunta, olvides]
 ---
 
 Cuando Kike pida recordar algo:
-- Guarda el dato en la memoria persistente con la herramienta de memoria disponible
-- Si no hay ninguna disponible, usa MEMORY.md como respaldo
+- Usa guardar_recuerdo con el dato en una frase breve y concreta
+- Confirma solo cuando la tool responda "Guardado"
 
-El contenido debe ser breve y concreto.
-Confirma que el dato ha sido guardado.
+Cuando Kike pregunte si recuerdas algo o por algo que te contó:
+- Usa buscar_recuerdos con el tema
+- Si no hay resultados, dilo; no inventes
