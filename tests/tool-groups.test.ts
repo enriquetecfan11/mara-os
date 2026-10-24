@@ -1,8 +1,9 @@
 /**
  * Grupos de tools activables con /tools (`src/tool-groups.ts`).
  *
- * Se comprueba que la memoria (Hindsight) nunca se puede apagar, que el estado
- * se persiste y que una tool MCP sin grupo cae en el grupo de su servidor.
+ * Se comprueba que los grupos arrancan apagados, que la memoria (Hindsight)
+ * nunca se puede apagar, que el estado se persiste y que una tool MCP sin
+ * grupo cae en el grupo de su servidor.
  */
 import assert from "node:assert/strict"
 import { before, describe, it } from "node:test"
@@ -41,7 +42,14 @@ describe("tool-groups", () => {
     )
   })
 
-  it("apagar todos los grupos deja solo la memoria", () => {
+  it("por defecto solo está activa la memoria", () => {
+    assert.ok(listToolGroups().every((g) => !g.enabled))
+    assert.deepEqual(names(getActiveTools()), ["buscar_recuerdos", "guardar_recuerdo"])
+  })
+
+  it("on activa grupos y off los vuelve a apagar", () => {
+    assert.deepEqual(setToolGroups(["tareas", "agentdesk"], "on"), { ok: true })
+    assert.deepEqual(names(getActiveTools()), ["buscar_recuerdos", "create_task", "guardar_recuerdo", "list_tasks", "whoami"])
     assert.deepEqual(setToolGroups(["tareas", "notas", "agentdesk"], "off"), { ok: true })
     assert.deepEqual(names(getActiveTools()), ["buscar_recuerdos", "guardar_recuerdo"])
     assert.equal(isToolEnabled("guardar_recuerdo"), true)
@@ -64,6 +72,6 @@ describe("tool-groups", () => {
     assert.deepEqual(setToolGroups(["notas"], "only"), { ok: true })
     assert.deepEqual(names(getActiveTools()), ["buscar_recuerdos", "create_note", "guardar_recuerdo"])
     const saved = JSON.parse(readFileSync(stateFile, "utf8"))
-    assert.deepEqual(saved.disabled, ["agentdesk", "tareas"])
+    assert.deepEqual(saved.enabled, ["notas"])
   })
 })

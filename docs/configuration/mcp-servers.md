@@ -88,7 +88,9 @@ desactivarlas desde Telegram sin reiniciar:
 - `memoria` es un nombre reservado: `guardar_recuerdo` y `buscar_recuerdos`
   siempre se envían al LLM y no se pueden desactivar.
 - Los grupos apagados se guardan en `data/tool-groups.json`
-  (`TOOL_GROUPS_STATE_FILE`). Por defecto todos están activos.
+  (`TOOL_GROUPS_STATE_FILE`, lista `enabled`). **Por defecto todos arrancan
+  apagados**: el LLM solo ve la memoria hasta que activas un grupo con
+  `/tools on <grupo>`. La conexión MCP se mantiene, así que activar es inmediato.
 - Si el modelo pide una tool de un grupo apagado, recibe
   `Herramienta "<nombre>" desactivada con /tools` en vez de ejecutarse.
 

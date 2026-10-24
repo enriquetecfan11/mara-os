@@ -5,7 +5,9 @@
 // servidor, para que una tool nueva no desaparezca sin avisar. Las tools de
 // memoria (Hindsight) no pertenecen a ningún grupo: están siempre activas.
 //
-// El estado (grupos desactivados) vive en data/tool-groups.json, igual que el
+// Por defecto todos los grupos arrancan APAGADOS: el LLM solo ve la memoria
+// hasta que se activa un grupo con /tools on. Menos tools = menos contexto.
+// El estado (grupos activados) vive en data/tool-groups.json, igual que el
 // proveedor de /modelo, y sobrevive a reinicios.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
@@ -21,7 +23,7 @@ export const MEMORY_GROUP = "memoria"
 const groupsPath = process.env.TOOL_GROUPS_FILE || join(agentDir, "tool-groups.json")
 const statePath = process.env.TOOL_GROUPS_STATE_FILE || join(agentDir, "..", "data", "tool-groups.json")
 
-let disabled: Set<string> | undefined
+let enabled: Set<string> | undefined
 
 /** Se lee en cada llamada: editar el JSON no requiere reiniciar el bot. */
 function loadGroupDefinitions(): Record<string, string[]> {
@@ -40,22 +42,22 @@ function loadGroupDefinitions(): Record<string, string[]> {
   }
 }
 
-function getDisabled(): Set<string> {
-  if (disabled) return disabled
-  disabled = new Set()
+function getEnabled(): Set<string> {
+  if (enabled) return enabled
+  enabled = new Set()
   try {
     if (existsSync(statePath)) {
-      const parsed = JSON.parse(readFileSync(statePath, "utf8")) as { disabled?: unknown }
-      if (Array.isArray(parsed.disabled)) {
-        for (const name of parsed.disabled) {
-          if (typeof name === "string" && name !== MEMORY_GROUP) disabled.add(name)
+      const parsed = JSON.parse(readFileSync(statePath, "utf8")) as { enabled?: unknown }
+      if (Array.isArray(parsed.enabled)) {
+        for (const name of parsed.enabled) {
+          if (typeof name === "string" && name !== MEMORY_GROUP) enabled.add(name)
         }
       }
     }
   } catch (err) {
     warn("Tools", `No se pudo leer ${statePath}: ${err}`)
   }
-  return disabled
+  return enabled
 }
 
 function persist(): void {
@@ -63,7 +65,7 @@ function persist(): void {
     mkdirSync(dirname(statePath), { recursive: true })
     writeFileSync(
       statePath,
-      `${JSON.stringify({ disabled: [...getDisabled()].sort(), updatedAt: new Date().toISOString() }, null, 2)}\n`,
+      `${JSON.stringify({ enabled: [...getEnabled()].sort(), updatedAt: new Date().toISOString() }, null, 2)}\n`,
     )
   } catch (err) {
     warn("Tools", `No se pudo guardar el estado en ${statePath}: ${err}`)
@@ -97,24 +99,24 @@ export function listToolGroups(): ToolGroupStatus[] {
     const group = groupOf(toolName(tool), groups)
     if (group) counts.set(group, (counts.get(group) ?? 0) + 1)
   }
-  const off = getDisabled()
+  const on = getEnabled()
   return [...counts]
     .filter(([, tools]) => tools > 0)
-    .map(([name, tools]) => ({ name, enabled: !off.has(name), tools }))
+    .map(([name, tools]) => ({ name, enabled: on.has(name), tools }))
 }
 
 export function isToolEnabled(name: string): boolean {
   const group = groupOf(name, loadGroupDefinitions())
-  return group === undefined || !getDisabled().has(group)
+  return group === undefined || getEnabled().has(group)
 }
 
 /** Tools que se envían al LLM. Las de memoria van siempre. */
 export function getActiveTools(): any[] {
   const groups = loadGroupDefinitions()
-  const off = getDisabled()
+  const on = getEnabled()
   return ollamaTools.filter((tool) => {
     const group = groupOf(toolName(tool), groups)
-    return group === undefined || !off.has(group)
+    return group === undefined || on.has(group)
   })
 }
 
@@ -136,15 +138,11 @@ export function setToolGroups(names: string[], mode: "on" | "off" | "only"): Set
     return { ok: false, reason: `Grupo desconocido: ${unknown.join(", ")}\nGrupos: ${known.join(" | ")}` }
   }
 
-  const off = getDisabled()
-  if (mode === "only") {
-    off.clear()
-    for (const name of known) if (!names.includes(name)) off.add(name)
-  } else {
-    for (const name of names) {
-      if (mode === "off") off.add(name)
-      else off.delete(name)
-    }
+  const on = getEnabled()
+  if (mode === "only") on.clear()
+  for (const name of names) {
+    if (mode === "off") on.delete(name)
+    else on.add(name)
   }
   persist()
   return { ok: true }

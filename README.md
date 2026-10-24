@@ -160,8 +160,10 @@ notas, proyectos, delegaciones, ejecuciones). Desde Telegram:
 /tools solo tareas notas   → deja activos solo esos grupos
 ```
 
-La memoria (`guardar_recuerdo`, `buscar_recuerdos`, Hindsight) está siempre
-activa: `/tools off memoria` se rechaza. El estado se guarda en
+Todos los grupos arrancan **apagados**: Mara solo ve la memoria hasta que
+activas lo que vayas a usar (`/tools on tareas`). La memoria
+(`guardar_recuerdo`, `buscar_recuerdos`, Hindsight) está siempre activa:
+`/tools off memoria` se rechaza. El estado se guarda en
 `data/tool-groups.json` y sobrevive a los reinicios. Menos tools activas = menos
 contexto y mejor elección de tool con modelos pequeños.
 
