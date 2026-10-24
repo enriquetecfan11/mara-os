@@ -118,7 +118,7 @@ export async function extractMemories(
     try {
       result = JSON.parse(response)
     } catch {
-      debug("MemoryExtractor", "Failed to parse extraction JSON")
+      warn("MemoryExtractor", `El LLM no devolvió JSON válido; no se guarda nada: ${response.slice(0, 200)}`)
       return
     }
 

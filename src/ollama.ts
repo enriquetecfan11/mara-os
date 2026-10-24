@@ -1,6 +1,7 @@
 import { getActiveLlm } from "./providers.js"
 import { callMcpTool } from "./mcp.js"
 import { getActiveTools, isToolEnabled } from "./tool-groups.js"
+import { detectRememberRequest, saveMemory } from "./memory-tools.js"
 import { loadAllSkills, detectSkills, loadSkillsContext } from "./skills.js"
 import { readContextFile } from "./cache.js"
 import { info, error as logError, debug, warn } from "./logger.js"
@@ -102,13 +103,30 @@ export async function askPi(chatId: number, message: string) {
     timestamp: Date.now(),
   })
 
-  const { systemPrompt, recentMessages } = await buildContext(memoryManager, {
+  // "Recuerda que…" se guarda aquí, sin esperar a que el modelo use la tool.
+  let rememberNote = ""
+  const explicitFact = detectRememberRequest(message)
+  if (explicitFact) {
+    try {
+      // "Kike dice:" evita que Hindsight atribuya el dato al asistente.
+      const result = await saveMemory(`Kike dice: ${explicitFact}`, "other", 0.9)
+      info("Memory", `Petición explícita guardada: "${explicitFact}"`)
+      rememberNote = `\n\nSISTEMA: el dato "${explicitFact}" ya está guardado en tu memoria a largo plazo (Hindsight). ${result} Confírmaselo a Kike en una frase y no llames a guardar_recuerdo.`
+    } catch (err) {
+      warn("Memory", `No se pudo guardar la petición explícita: ${err}`)
+    }
+  }
+
+  const { systemPrompt: baseSystemPrompt, recentMessages } = await buildContext(memoryManager, {
     chatId,
     userMessage: message,
     maxConversationTokens: MAX_CONVERSATION_TOKENS,
     maxMemoryTokens: MAX_MEMORY_TOKENS,
     memorySearchLimit: MEMORY_SEARCH_LIMIT,
   })
+  // Va en el system prompt y no como mensaje aparte: algunas plantillas de chat
+  // (Qwen) rechazan mensajes system que no estén al principio.
+  const systemPrompt = baseSystemPrompt + rememberNote
 
   const controller = new AbortController()
   activeControllers.set(chatId, controller)

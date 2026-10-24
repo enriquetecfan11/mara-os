@@ -195,6 +195,19 @@ Además de la extracción automática, Mara tiene dos tools nativas
 
 Usan el mismo `MemoryManager` que el resto: Hindsight con espejo SQLite y outbox.
 
+### "Recuerda que…" sin depender del modelo
+
+Los modelos pequeños no llaman a `guardar_recuerdo` de forma fiable, y el
+extractor automático se salta mensajes (como mucho una extracción por minuto y
+chat). Por eso `askPi()` detecta las peticiones explícitas con
+`detectRememberRequest()` ("recuerda que…", "apunta…", "no olvides que…",
+"acuérdate de que…", "memoriza…") y las guarda **antes** de llamar al LLM, como
+`Kike dice: <dato>` para que Hindsight no se las atribuya al asistente. Al
+system prompt se le añade una nota para que el modelo solo lo confirme.
+
+No se activa con preguntas ni con "recuérdame…", que suele ser un recordatorio.
+En el log aparece `[Memory] Petición explícita guardada: "<dato>"`.
+
 ## Comandos
 
 - `/memory [query]` — Buscar recuerdos

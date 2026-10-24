@@ -56,6 +56,35 @@ export const memoryToolSchemas = [
   },
 ]
 
+/** Guarda un recuerdo manual (Hindsight + espejo SQLite) y describe el resultado. */
+export async function saveMemory(content: string, type: MemoryType = "other", importance = 0.8): Promise<string> {
+  const manager = getMemoryManager()
+  const entry = await manager.remember(content, type, importance, "manual")
+  const pending = manager.getPendingSyncCount()
+  debug("MemoryTools", `Recuerdo guardado ${entry.id} (pendientes: ${pending})`)
+  return pending > 0
+    ? `Guardado (id ${entry.id}). Hindsight lo recibirá en el próximo reintento.`
+    : `Guardado en Hindsight (id ${entry.id}).`
+}
+
+// "recuerda que…", "apunta…", "no olvides que…". No incluye "recuérdame",
+// que suele ser un recordatorio (una tarea), no un dato que memorizar.
+const REMEMBER_REQUEST =
+  /^(?:(?:oye|mara|por favor)[,\s]+)*(?:recuerda|acuérdate de|acuerdate de|apunta|anota|memoriza|guarda en (?:la |tu )?memoria|no (?:te )?olvides(?: de)?)(?:\s+(?:que|esto|lo siguiente))?\s*[:,]?\s+(.+)$/i
+
+/**
+ * Si el mensaje es una petición explícita de recordar algo, devuelve el dato.
+ * El bot lo guarda directamente, sin depender de que el modelo llame a
+ * guardar_recuerdo (los modelos pequeños no lo hacen de forma fiable).
+ */
+export function detectRememberRequest(message: string): string | null {
+  const text = message.trim()
+  if (text.endsWith("?")) return null
+  const match = REMEMBER_REQUEST.exec(text)
+  const fact = match?.[1]?.trim().replace(/[.!]+$/, "")
+  return fact && fact.length >= 3 ? fact : null
+}
+
 const handlers: Record<string, (args: any) => Promise<string>> = {
   async guardar_recuerdo(args) {
     const content = String(args?.contenido ?? "").trim()
@@ -63,14 +92,7 @@ const handlers: Record<string, (args: any) => Promise<string>> = {
     const type = MEMORY_TYPES.includes(args?.tipo) ? (args.tipo as MemoryType) : "other"
     const raw = Number(args?.importancia)
     const importance = Number.isFinite(raw) ? Math.max(0, Math.min(1, raw)) : 0.8
-
-    const manager = getMemoryManager()
-    const entry = await manager.remember(content, type, importance, "manual")
-    const pending = manager.getPendingSyncCount()
-    debug("MemoryTools", `Recuerdo guardado ${entry.id} (pendientes: ${pending})`)
-    return pending > 0
-      ? `Guardado (id ${entry.id}). Hindsight lo recibirá en el próximo reintento.`
-      : `Guardado en Hindsight (id ${entry.id}).`
+    return saveMemory(content, type, importance)
   },
 
   async buscar_recuerdos(args) {
