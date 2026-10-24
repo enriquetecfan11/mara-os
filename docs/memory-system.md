@@ -267,10 +267,14 @@ const memorySearch = await memoryManager.search({
 Los resultados se formatean en `{{MEMORY}}`:
 
 ```
-MEMORIAS RELEVANTES:
+RECUERDOS DE TU MEMORIA A LARGO PLAZO (Hindsight). Persisten entre conversaciones y reinicios; si te preguntan qué recuerdas, responde con esto o usa buscar_recuerdos:
 - [personal_fact] Mi perro se llama Toscano (importancia: 0.8)
 - [preference] Prefiero café con leche (importancia: 0.6)
 ```
+
+La cabecera nombra Hindsight a propósito: con un simple "MEMORIAS RELEVANTES",
+los modelos pequeños creían que esos datos venían del chat y negaban tener
+memoria persistente mientras la estaban usando.
 
 ---
 

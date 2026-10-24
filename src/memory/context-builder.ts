@@ -79,6 +79,11 @@ async function buildSkillsContext(userMessage: string): Promise<string> {
   return await loadSkillsContext(detectedSkills)
 }
 
+// Sin esta cabecera, modelos pequeños creen que estos datos "son del chat" y
+// niegan tener memoria persistente aunque la estén usando.
+const MEMORY_HEADER =
+  "RECUERDOS DE TU MEMORIA A LARGO PLAZO (Hindsight). Persisten entre conversaciones y reinicios; si te preguntan qué recuerdas, responde con esto o usa buscar_recuerdos:"
+
 function formatMemoryContext(entries: Array<{ content: string; type: string; importance: number }>, maxTokens: number): string {
   if (entries.length === 0) return ""
 
@@ -87,7 +92,7 @@ function formatMemoryContext(entries: Array<{ content: string; type: string; imp
 
   const estimatedTokens = Math.ceil(joined.length / 3.5)
   if (estimatedTokens <= maxTokens) {
-    return `MEMORIAS RELEVANTES:\n${joined}`
+    return `${MEMORY_HEADER}\n${joined}`
   }
 
   let currentTokens = 0
@@ -99,5 +104,5 @@ function formatMemoryContext(entries: Array<{ content: string; type: string; imp
     currentTokens += lineTokens
   }
 
-  return `MEMORIAS RELEVANTES (top ${filtered.length}):\n${filtered.join("\n")}`
+  return `${MEMORY_HEADER}\n${filtered.join("\n")}`
 }
