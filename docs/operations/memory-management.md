@@ -275,7 +275,7 @@ En el homelab, con el vault clonado en `~/mara/obisidian-vault`,
 `scripts/homelab/sync_vault.sh` hace todo: `git pull` del vault, importación
 dentro de la imagen `mara-os` (sin Node en el host) y comprobación final
 (Hindsight sano, 0 notas pendientes, la búsqueda devuelve notas). Se copia a
-`~/mara/scripts/`. Las notas borradas del vault no se borran de Hindsight.
+`~/mara/scripts/`.
 
 O directamente:
 
@@ -292,6 +292,11 @@ pnpm import:obsidian ~/Documents/obisidian-vault                            # to
   volver a ejecutar reintenta solo esa.
 - Se saltan `.obsidian`, `.trash`, `templates` y las notas casi vacías; el
   frontmatter se quita.
+- Las notas que ya no están en el vault (borradas, movidas o que se quedaron
+  casi vacías) se **borran de Hindsight** (`DELETE .../documents/obsidian:<ruta>`).
+  Con `--folder` solo se miran las de esa carpeta. Si el borrado afectara a más
+  de la mitad del banco (vault vacío o mal clonado) no se borra nada y el
+  comando falla; `--allow-mass-delete` lo fuerza y `--no-delete` lo desactiva.
 - Se ejecuta donde está el vault (el Mac) contra el Hindsight de la LAN.
 
 ### Modo `chunks`: sin LLM ni tokens

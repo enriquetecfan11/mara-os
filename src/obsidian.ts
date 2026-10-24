@@ -78,3 +78,22 @@ export function listVaultNotes(vault: string, folders: string[] = []): VaultNote
 export function noteDocumentId(path: string): string {
   return `obsidian:${path}`
 }
+
+/**
+ * Notas que están en Hindsight pero ya no en el vault (borradas, movidas o que
+ * se han quedado casi vacías). Con carpetas, solo se consideran las de dentro:
+ * importar una carpeta no debe borrar el resto del vault.
+ */
+export function notesToDelete(remotePaths: string[], vaultPaths: string[], folders: string[] = []): string[] {
+  const present = new Set(vaultPaths)
+  const prefixes = folders.map((f) => `${f.replace(/\/+$/, "")}/`)
+  return remotePaths
+    .filter((path) => prefixes.length === 0 || prefixes.some((p) => path.startsWith(p)))
+    .filter((path) => !present.has(path))
+    .sort()
+}
+
+/** Umbral de seguridad: borrar más de la mitad del banco suele ser un error (vault mal montado, rama equivocada). */
+export function isMassDeletion(toDelete: number, remoteTotal: number): boolean {
+  return toDelete > 10 && toDelete > remoteTotal / 2
+}

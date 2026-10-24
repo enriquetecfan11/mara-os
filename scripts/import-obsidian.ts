@@ -10,8 +10,13 @@
  * reimportar reemplaza la nota en vez de duplicarla. Las notas que no han
  * cambiado desde la última importación se saltan (data/obsidian-import.json).
  *
+ * Las notas que ya no existen en el vault (borradas, movidas, o casi vacías) se
+ * borran de Hindsight. Si eso afectara a más de la mitad del banco se aborta,
+ * salvo con --allow-mass-delete (protege contra un vault mal montado).
+ *
  * Uso:
  *   pnpm import:obsidian <vault> [--folder <carpeta>]... [--limit N] [--dry-run] [--force]
+ *                       [--no-delete] [--allow-mass-delete]
  *
  * Ejemplos:
  *   pnpm import:obsidian ~/Documents/obisidian-vault --folder MaraOs --dry-run
@@ -23,7 +28,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { homedir } from "node:os"
 import { agentDir, hindsightApiUrl, hindsightApiKey, hindsightTenant, hindsightNotesBankId } from "../src/config.js"
-import { listVaultNotes, noteDocumentId, type VaultNote } from "../src/obsidian.js"
+import { isMassDeletion, listVaultNotes, noteDocumentId, notesToDelete, type VaultNote } from "../src/obsidian.js"
 
 const statePath = process.env.OBSIDIAN_IMPORT_STATE_FILE || join(agentDir, "..", "data", "obsidian-import.json")
 // La extracción de hechos de una nota larga puede tardar minutos con un LLM local.
@@ -36,16 +41,20 @@ interface Args {
   limit?: number
   dryRun: boolean
   force: boolean
+  noDelete: boolean
+  allowMassDelete: boolean
 }
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { vault: "", folders: [], dryRun: false, force: false }
+  const args: Args = { vault: "", folders: [], dryRun: false, force: false, noDelete: false, allowMassDelete: false }
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     if (arg === "--folder") args.folders.push(argv[++i])
     else if (arg === "--limit") args.limit = Number(argv[++i])
     else if (arg === "--dry-run") args.dryRun = true
     else if (arg === "--force") args.force = true
+    else if (arg === "--no-delete") args.noDelete = true
+    else if (arg === "--allow-mass-delete") args.allowMassDelete = true
     else if (!args.vault) args.vault = arg
     else throw new Error(`Argumento desconocido: ${arg}`)
   }
@@ -99,6 +108,34 @@ async function ensureChunksBank(): Promise<void> {
   if (!res.ok) throw new Error(`No se pudo configurar el banco: HTTP ${res.status} ${(await res.text()).slice(0, 300)}`)
 }
 
+/** Rutas de las notas que hay ahora en el banco (documentos "obsidian:<ruta>"). */
+async function listRemoteNotes(): Promise<string[]> {
+  const paths: string[] = []
+  for (let offset = 0; ; offset += 100) {
+    const res = await fetch(`${bankUrl}/documents?limit=100&offset=${offset}`, {
+      headers: headers(),
+      signal: AbortSignal.timeout(30_000),
+    })
+    if (res.status === 404) return paths // el banco aún no existe
+    if (!res.ok) throw new Error(`No se pudo listar los documentos: HTTP ${res.status} ${(await res.text()).slice(0, 300)}`)
+    const page = (await res.json()) as { items?: Array<{ id: string }>; total?: number }
+    const items = page.items ?? []
+    for (const item of items) {
+      if (item.id.startsWith("obsidian:")) paths.push(item.id.slice("obsidian:".length))
+    }
+    if (items.length < 100 || offset + items.length >= (page.total ?? 0)) return paths
+  }
+}
+
+async function deleteNote(path: string): Promise<void> {
+  const res = await fetch(`${bankUrl}/documents/${encodeURIComponent(noteDocumentId(path))}`, {
+    method: "DELETE",
+    headers: headers(),
+    signal: AbortSignal.timeout(60_000),
+  })
+  if (!res.ok && res.status !== 404) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`)
+}
+
 async function retain(note: VaultNote): Promise<void> {
   const url = `${bankUrl}/memories`
   const folder = note.path.includes("/") ? note.path.split("/")[0] : "raiz"
@@ -140,13 +177,31 @@ async function main(): Promise<void> {
   const pending = all.filter((n) => state[n.path] !== n.hash).slice(0, args.limit)
   const kb = Math.round(pending.reduce((sum, n) => sum + n.content.length, 0) / 1024)
 
+  const remote = args.noDelete ? [] : await listRemoteNotes()
+  const toDelete = args.noDelete ? [] : notesToDelete(remote, all.map((n) => n.path), args.folders)
+
   console.log(`Vault: ${args.vault}${args.folders.length ? ` (carpetas: ${args.folders.join(", ")})` : ""}`)
   console.log(`Hindsight: ${hindsightApiUrl} · banco "${hindsightNotesBankId}"`)
-  console.log(`Notas: ${all.length} · sin cambios: ${all.length - all.filter((n) => state[n.path] !== n.hash).length} · a importar: ${pending.length} (${kb} KB)\n`)
+  console.log(
+    `Notas: ${all.length} · sin cambios: ${all.length - all.filter((n) => state[n.path] !== n.hash).length}` +
+    ` · a importar: ${pending.length} (${kb} KB) · a borrar: ${toDelete.length}\n`,
+  )
+
+  // Un vault vacío o casi vacío frente a un banco lleno casi siempre es un
+  // error (ruta mal montada, rama equivocada): no se borra nada sin permiso.
+  const massDeletion = isMassDeletion(toDelete.length, remote.length) && !args.allowMassDelete
+  if (massDeletion) {
+    console.log(
+      `⚠️  Se borrarían ${toDelete.length} de ${remote.length} notas del banco. Parece un error del vault, ` +
+      `así que no se borra nada. Si es intencionado, relanza con --allow-mass-delete.\n`,
+    )
+  }
 
   if (args.dryRun) {
-    for (const n of pending) console.log(`  ${n.path} (${Math.round(n.content.length / 1024)} KB)`)
-    console.log("\n--dry-run: no se ha enviado nada.")
+    for (const n of pending) console.log(`  + ${n.path} (${Math.round(n.content.length / 1024)} KB)`)
+    for (const path of toDelete) console.log(`  - ${path}`)
+    console.log("\n--dry-run: no se ha enviado ni borrado nada.")
+    if (massDeletion) process.exitCode = 1
     return
   }
 
@@ -169,7 +224,26 @@ async function main(): Promise<void> {
     }
   }
 
-  console.log(`\nImportadas: ${ok} · fallidas: ${failed.length}`)
+  let deleted = 0
+  if (massDeletion) {
+    process.exitCode = 1
+  } else {
+    for (const path of toDelete) {
+      process.stdout.write(`[borrar] ${path} … `)
+      try {
+        await deleteNote(path)
+        delete state[path]
+        saveState(state)
+        deleted++
+        console.log("ok")
+      } catch (err) {
+        failed.push(path)
+        console.log(`ERROR: ${err instanceof Error ? err.message : err}`)
+      }
+    }
+  }
+
+  console.log(`\nImportadas: ${ok} · borradas: ${deleted} · fallidas: ${failed.length}`)
   if (failed.length > 0) {
     console.log("Vuelve a ejecutar el mismo comando para reintentar solo las fallidas.")
     process.exitCode = 1

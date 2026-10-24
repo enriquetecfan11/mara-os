@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Sincroniza el vault de Obsidian del homelab con Hindsight:
 #   1. Actualiza el vault (git pull).
-#   2. Sube las notas nuevas o modificadas al banco de notas (modo chunks, sin LLM).
-#   3. Comprueba que Hindsight responde, que no queda nada pendiente y que la
-#      búsqueda devuelve notas.
+#   2. Sube las notas nuevas o modificadas al banco de notas (modo chunks, sin LLM)
+#      y borra de Hindsight las que ya no están en el vault.
+#   3. Comprueba que Hindsight responde, que no queda nada por subir ni por
+#      borrar, que el banco tiene tantas notas como el vault y que la búsqueda
+#      devuelve notas.
 #
 # La importación corre dentro de la imagen de mara-os (no hace falta Node en el
 # host). El estado de lo ya importado vive en mara-os/data/obsidian-import.json.
@@ -12,6 +14,10 @@
 #   ~/mara/scripts/sync_vault.sh             # sincroniza
 #   ~/mara/scripts/sync_vault.sh --dry-run   # solo enseña qué subiría
 #   ~/mara/scripts/sync_vault.sh --force     # reenvía todas las notas
+#   ~/mara/scripts/sync_vault.sh --no-delete # no borra nada de Hindsight
+#
+# Si los borrados afectaran a más de la mitad del banco (vault vacío o mal
+# clonado), no se borra nada y el script falla; --allow-mass-delete lo fuerza.
 #
 # Variables opcionales: VAULT_DIR, MARA_DIR, MARA_IMAGE, NOTES_BANK
 set -euo pipefail
@@ -53,7 +59,7 @@ else
 fi
 
 # ---------- 2. Subir novedades ----------
-step "2/3 Subiendo novedades a Hindsight (banco $NOTES_BANK)"
+step "2/3 Subiendo novedades y borrando notas eliminadas (banco $NOTES_BANK)"
 mkdir -p "$MARA_DIR/data"
 run_importer() {
   docker run --rm \
@@ -63,7 +69,8 @@ run_importer() {
     -v "$MARA_DIR/data:/app/data" \
     "$MARA_IMAGE" node --import tsx scripts/import-obsidian.ts /vault "$@"
 }
-run_importer "${IMPORT_ARGS[@]}" || fail "La importación terminó con errores (relanza el script: solo reintenta las fallidas)"
+run_importer "${IMPORT_ARGS[@]}" \
+  || fail "La importación terminó con errores o se frenó un borrado masivo (mira arriba; relanzar solo reintenta lo fallido)"
 
 for arg in "${IMPORT_ARGS[@]}"; do
   [[ "$arg" == "--dry-run" ]] && { printf '\n--dry-run: no se comprueba nada más.\n'; exit 0; }
@@ -75,14 +82,25 @@ curl -sf -m 10 "$HINDSIGHT_URL/health" | grep -q '"healthy"' \
   && ok "Hindsight responde ($HINDSIGHT_URL)" \
   || fail "Hindsight no responde en $HINDSIGHT_URL"
 
-pending="$(run_importer --dry-run 2>/dev/null | grep -oE 'a importar: [0-9]+' | grep -oE '[0-9]+' || echo '?')"
+summary="$(run_importer --dry-run 2>/dev/null | grep -E '^Notas: ' || true)"
+num() { echo "$summary" | grep -oE "$1: [0-9]+" | grep -oE '[0-9]+' || echo '?'; }
+pending="$(num 'a importar')"; to_delete="$(num 'a borrar')"; notes="$(num 'Notas')"
 [[ "$pending" == "0" ]] \
-  && ok "No queda ninguna nota pendiente" \
+  && ok "No queda ninguna nota por subir" \
   || fail "Quedan $pending notas sin subir (relanza el script)"
+[[ "$to_delete" == "0" ]] \
+  && ok "No queda ninguna nota borrada en Hindsight" \
+  || fail "Quedan $to_delete notas borradas del vault en Hindsight (relanza el script)"
 
-docs="$(curl -sf -m 10 "$BANK_URL/stats" | grep -oE '"total_documents":[0-9]+' | grep -oE '[0-9]+' || echo 0)"
-notes="$(find "$VAULT_DIR" -name '*.md' -not -path '*/.*' -not -path '*/templates/*' | wc -l)"
-ok "Banco $NOTES_BANK: $docs documentos (el vault tiene $notes .md; las notas casi vacías no se suben)"
+docs="$(curl -sf -m 10 "$BANK_URL/stats" | grep -oE '"total_documents":[0-9]+' | grep -oE '[0-9]+' || echo '?')"
+# Con --folder el importador solo cuenta esa carpeta: no se puede comparar con el banco entero.
+if [[ " ${IMPORT_ARGS[*]} " == *" --folder "* ]]; then
+  ok "Banco $NOTES_BANK: $docs documentos"
+else
+  [[ "$docs" == "$notes" ]] \
+    && ok "Banco $NOTES_BANK: $docs documentos = $notes notas en el vault" \
+    || fail "Banco $NOTES_BANK: $docs documentos, pero el vault tiene $notes notas"
+fi
 
 hits="$(curl -sf -m 20 -X POST "$BANK_URL/memories/recall" -H 'Content-Type: application/json' \
   -d '{"query":"notas","budget":"low","max_tokens":1000}' | grep -oE '"document_id":"obsidian:[^"]*"' | head -3 || true)"
